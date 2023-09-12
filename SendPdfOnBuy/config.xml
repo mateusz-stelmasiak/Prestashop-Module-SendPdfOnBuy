@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<module>
+	<name>SendPdfOnBuy</name>
+	<displayName><![CDATA[Send on buy]]></displayName>
+	<version><![CDATA[1.0.0]]></version>
+	<description><![CDATA[Allows you to choose a pdf file to be sent to a client once he buys certain products.]]></description>
+	<author><![CDATA[Mateusz Stelmasiak]]></author>
+	<tab><![CDATA[emailing]]></tab>
+	<is_configurable>1</is_configurable>
+	<need_instance>1</need_instance>
+</module>
