@@ -6,11 +6,15 @@ Say one word, like **goth**, pick a category, like **OUTFITS**, and get the top 
 
 ![SimsGrab](screenshot.png)
 
+![This or That](this-or-that.png)
+
 ## What you see
 
 - **The one line:** a word, a category, and **GO**. Or paste a Pinterest link:
   - **Pin:** the pin itself (marked **THIS PIN**), Pinterest's related pins, the rest of its board, then a web search on its description, up to 50. Download all, just the pin, or pick.
   - **Board** (`pinterest.com/user/board/`): every pin on it. **Profile:** their latest pins.
+- **This or That (VS):** start from a pin or a word and hit **VS**. Each round shows two mods that look alike except for one quality. Pick with a click or ← →. Your taste is the average of your picks, and each next pair is chosen from it. Picking a pin pulls in more pins like it. After 10 rounds, or **PICK FOR ME**, every mod is ranked by **% MATCH** and your top 20 are ready to download.
+  - Qualities come from each mod's picture: DARK–LIGHT, MUTED–COLORFUL, COOL–WARM, SOFT–CONTRASTY, SIMPLE–DETAILED. MAXIS MATCH–ALPHA comes from the title. The meter under the pair shows where your taste sits.
 - **Result grid:** up to 50 pages with preview images. Click cards to pick or unpick, then **DOWNLOAD PACK**. Each card shows `...` while working, `✓ IN` when installed, `✗` when it failed.
 - **Agent browser:** the page an agent is reading right now and the link it clicks (green bar with the cursor). The log underneath lists every step.
 - **Plumbie:** click her any time for the menu. Use the arrow keys and Enter, or the mouse.

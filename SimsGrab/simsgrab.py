@@ -306,7 +306,7 @@ def pins_in(data, found):
         if isinstance(imgs, dict) and data.get("id") and link.startswith("http") and "pinterest." not in link:
             img = next((imgs[k]["url"] for k in ("564x", "474x", "236x", "237x", "orig") if isinstance(imgs.get(k), dict)), "")
             text = " ".join(str(data.get("grid_title") or data.get("title") or data.get("description") or "").split())
-            found.setdefault(link, {"url": link, "title": text[:90] or agent(link), "image": img,
+            found.setdefault(link, {"url": link, "title": text[:90] or agent(link), "image": img, "pin": str(data["id"]),
                                     "site": urlparse(link).netloc.removeprefix("www.")})
         data = list(data.values())
     for v in data if isinstance(data, list) else []:
@@ -456,6 +456,22 @@ class Api:
     def similar(self, url):
         name, cards = similar(url, self._cfg["model"], self._log, self._see)
         return {"name": name, "results": cards}
+
+    def related(self, pin):
+        """More pins like one the player picked in This or That, without the web search top-up."""
+        try:
+            return similar(f"https://www.pinterest.com/pin/{pin}/", log=self._log)[1]
+        except (Fail, OSError, ValueError):
+            return []
+
+    def image(self, url):
+        """An image as a data: URL, so the page may read its pixels (canvas blocks other sites' images)."""
+        try:
+            r = web.open(Request(url, headers={"User-Agent": UA}), timeout=15)
+            kind, data = r.headers.get_content_type(), r.read(3_000_000)
+        except (OSError, ValueError):
+            return ""
+        return f"data:{kind};base64,{base64.b64encode(data).decode()}" if kind.startswith("image/") else ""
 
     def grab(self, url):
         p = grab(url, self._log, self._cfg["model"], see=self._see)

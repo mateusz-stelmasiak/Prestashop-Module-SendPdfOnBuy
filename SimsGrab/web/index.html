@@ -39,7 +39,7 @@ header { position: relative; z-index: 1; display: flex; align-items: center; gap
 
 /* results + agent browser */
 main { position: relative; z-index: 1; display: grid; grid-template-columns: 1fr 380px; gap: 16px; padding: 0 20px 150px; min-height: 0; }
-.results { display: flex; flex-direction: column; min-height: 0; }
+.results { position: relative; display: flex; flex-direction: column; min-height: 0; }
 .tools { display: flex; gap: 8px; align-items: center; font: 9px var(--pix); color: var(--muted); padding-bottom: 10px; }
 .tools .count { flex: 1; }
 .tools button { background: var(--panel); padding: 9px 10px; font: 9px var(--pix); }
@@ -99,6 +99,34 @@ main { position: relative; z-index: 1; display: grid; grid-template-columns: 1fr
 .choices.show { display: block; animation: pop .2s steps(3); }
 .choices div { font-size: 28px; padding: 1px 0 1px 26px; position: relative; cursor: pointer; white-space: nowrap; }
 .choices div.sel::before { content: "▶"; position: absolute; left: 2px; font-size: 22px; top: 4px; }
+
+/* This or That */
+.go.vs { background: var(--pink); padding: 0 16px; }
+#vs { position: absolute; inset: 0; background: var(--night); display: none; flex-direction: column; gap: 14px; z-index: 1; }
+#vs.on { display: flex; }
+.vs-top { display: flex; align-items: center; gap: 10px; font: 10px var(--pix); color: var(--muted); }
+.vs-top b { flex: 1; color: var(--green); font-weight: normal; }
+.vs-top button { background: var(--green); color: var(--night); font: 9px var(--pix); padding: 9px 10px; }
+.vs-top button.quit { background: var(--panel); color: var(--ink); }
+.duel { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; align-items: stretch; }
+.duel .vsx { align-self: center; font: 28px var(--pix); color: var(--pink); text-shadow: 3px 3px 0 #0008; animation: bob 1s steps(2) infinite; }
+.pickc { display: flex; flex-direction: column; min-height: 0; max-height: 420px; background: var(--panel); border: 4px solid var(--line);
+         cursor: pointer; transition: transform .15s steps(3), opacity .3s steps(4); animation: pop .25s steps(3); }
+.pickc:hover { border-color: var(--green); transform: translateY(-4px); }
+.pickc .img { flex: 1; min-height: 0; background: var(--line) center/cover; }
+.pickc .t { padding: 8px 10px 0; font-size: 24px; height: 52px; overflow: hidden; }
+.pickc .s { padding: 0 10px; font: 8px var(--pix); color: var(--muted); }
+.pickc .key { padding: 8px 10px 10px; font: 9px var(--pix); color: var(--green); }
+.pickc.win { border-color: var(--green); transform: scale(1.04); }
+.pickc.lose { opacity: .15; transform: translateY(30px) rotate(-4deg); }
+.meter { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; font: 7px var(--pix); color: var(--muted); }
+.meter div { display: grid; grid-template-columns: 96px 1fr 96px; align-items: center; gap: 8px; }
+.meter div span:last-child { text-align: right; }
+.meter div.hot { color: var(--pink); }
+.meter i { position: relative; height: 10px; background: var(--panel); }
+.meter i::after { content: ""; position: absolute; top: -3px; width: 8px; height: 16px; background: var(--green);
+                  left: calc(var(--v, .5) * 100% - 4px); transition: left .5s steps(6); }
+.card .me.pct { background: var(--green); }
 </style>
 </head>
 <body>
@@ -110,6 +138,7 @@ main { position: relative; z-index: 1; display: grid; grid-template-columns: 1fr
     <input id="word" placeholder="one word: goth... or paste a pin / board" autocomplete="off" spellcheck="false">
     <select id="cat"></select>
     <button class="go">GO</button>
+    <button type="button" class="go vs" id="vsgo" title="This or That: I learn your taste, then pick">VS</button>
   </form>
   <div class="bar">AI <select id="model"></select> MODS <button id="mods" title="Change Mods folder"></button>
     <button id="open" title="Open Mods folder">📂</button></div>
@@ -121,6 +150,11 @@ main { position: relative; z-index: 1; display: grid; grid-template-columns: 1fr
       <button id="all">ALL</button><button id="none">NONE</button>
       <button class="big" id="dl" disabled>DOWNLOAD PACK ▶</button></div>
     <div class="grid" id="grid"><p class="empty">ONE WORD.<br><b>50 MODS.</b><br>ONE CLICK.</p></div>
+    <div id="vs">
+      <div class="vs-top"><span>THIS OR THAT</span><b id="round"></b><button class="quit" id="quit">QUIT</button><button id="enough">PICK FOR ME ▶</button></div>
+      <div class="duel"><div class="pickc" id="pa"></div><div class="vsx">VS</div><div class="pickc" id="pb"></div></div>
+      <div class="meter" id="meter"></div>
+    </div>
   </section>
   <section class="browser">
     <div class="chrome"><i></i><i></i><i></i><div class="url" id="url">agent browser idle</div></div>
@@ -203,14 +237,15 @@ renderer.setAnimationLoop((ms) => {
 cv.onclick = () => !state.busy && menu();
 
 /* ---------- Pokémon-style dialog: say(text, choices?, ask?) ---------- */
-let queue = Promise.resolve();
+let queue = Promise.resolve(), passing = false;  // passing: a line nobody has to answer is being typed
 function say(text, choices = [], ask = false, wait = true) {
+  if (passing) talking = 0;  // a newer line cuts it short instead of queueing behind it
   const run = queue.then(() => new Promise((done) => {
     const d = $("#dialog"), box = $("#say"), more = d.querySelector(".more"), inp = $("#ask"), ch = $("#choices");
     cv.classList.add("in"); d.classList.add("show"); ch.classList.remove("show"); more.style.display = inp.style.display = "none";
-    box.textContent = ""; talking = 1; let i = 0;
+    box.textContent = ""; talking = 1; passing = !wait && !ask && !choices.length; let i = 0;
     const finish = () => {
-      talking = 0; box.textContent = text;
+      talking = 0; passing = false; box.textContent = text;
       if (ask) { inp.style.display = "block"; inp.value = ""; inp.focus(); inp.onkeydown = (e) => e.key === "Enter" && inp.value.trim() && (close(), done(inp.value.trim())); }
       else if (choices.length) pickFrom(choices, (k) => (close(), done(k)));
       else if (!wait) done();
@@ -242,10 +277,11 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 /* ---------- flows ---------- */
 async function menu() {
   const k = await say("Hiii! I'm Plumbie, your mod buddy ✦ What are we hunting today?",
-                      ["Mods by vibe", "Pinterest pin or board", "Tidy my Downloads", "Just browsing"]);
+                      ["Mods by vibe", "This or That game", "Pinterest pin or board", "Tidy my Downloads", "Just browsing"]);
   if (k === 0) return vibe();
-  if (k === 1) return go(await say("Paste a pin or a whole board right here!", [], true), "");
-  if (k === 2) return tidy();
+  if (k === 1) return play(await say("Paste a pin to start from, or say one word!", [], true));
+  if (k === 2) return go(await say("Paste a pin or a whole board right here!", [], true), "");
+  if (k === 3) return tidy();
   hush();
 }
 async function vibe() {
@@ -257,6 +293,7 @@ async function vibe() {
 }
 async function go(word, cat) {
   if (state.busy || !word) return;
+  if (game.on) quit();
   if (/pinterest\.|pin\.it\//.test(word)) return pinMode(word);
   if (/^(https?:\/\/|www\.)/.test(word)) return grabOne(word);
   busy(true); state.packName = `${word} ${cat}`.trim().replace(/\b\w/g, (c) => c.toUpperCase()); clearLog();
@@ -311,13 +348,130 @@ async function tidy() {
   catch (e) { say(`Couldn't tidy: ${e.message || e}`); }
 }
 
+/* ---------- This or That: learn the player's taste from pairs, then pick by the average ---------- */
+const AXES = [["DARK", "LIGHT"], ["MUTED", "COLORFUL"], ["COOL", "WARM"], ["SOFT", "CONTRASTY"], ["SIMPLE", "DETAILED"], ["MAXIS MATCH", "ALPHA"]];
+const LINES = ["Ooh, tough one!", "Hmm hmm...", "Choose wisely ✦", "Cute pick!", "Next round!", "I'm learning you~"];
+const game = { on: false, pool: [], picks: [], seen: new Set(), round: 0, max: 10, axis: -1, pair: [], grown: 0 };
+const loadImg = (src) => new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = src; });
+const each = (list, fn, n) => { const q = [...list]; return Promise.all(Array.from({ length: n }, async () => { while (q.length) await fn(q.shift()); })); };
+const taste = () => AXES.map((_, k) => (game.picks.length ? game.picks.reduce((a, c) => a + c.f[k], 0) / game.picks.length : 0.5));
+const dist = (a, b, skip = -1) => Math.sqrt(a.reduce((s, v, k) => (k === skip ? s : s + (v - b[k]) ** 2), 0));
+
+async function look(card) {  // raw qualities of one mod: five from its picture, one from its title
+  const t = `${card.title} ${card.url}`.toLowerCase();
+  const alpha = /alpha|realis|\bhq\b|high.?quality/.test(t) ? 1 : /maxis.?match|\bmm\b/.test(t) ? 0 : 0.5;
+  try {
+    card.src = await api().image(card.image);
+    const c = document.createElement("canvas"), x = c.getContext("2d", { willReadFrequently: true });
+    c.width = c.height = 32; x.drawImage(await loadImg(card.src), 0, 0, 32, 32);
+    const d = x.getImageData(0, 0, 32, 32).data, L = [];
+    let sat = 0, warm = 0, w = 0, edge = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i] / 255, g = d[i + 1] / 255, b = d[i + 2] / 255, hi = Math.max(r, g, b), s = hi ? (hi - Math.min(r, g, b)) / hi : 0;
+      L.push(0.299 * r + 0.587 * g + 0.114 * b); sat += s; warm += (s * (r - b + 1)) / 2; w += s;
+    }
+    const mean = L.reduce((a, v) => a + v) / L.length, sd = Math.sqrt(L.reduce((a, v) => a + (v - mean) ** 2, 0) / L.length);
+    L.forEach((v, i) => i % 32 && (edge += Math.abs(v - L[i - 1])));
+    card.raw = [mean, sat / L.length, w ? warm / w : 0.5, sd, edge / L.length, alpha];
+  } catch { card.raw = null; }
+}
+function spread() {  // every quality becomes a 0..1 rank inside the pool, so "different" means different here
+  const ok = game.pool.filter((c) => c.raw);
+  AXES.forEach((_, k) => {
+    const vals = ok.map((c) => c.raw[k]);
+    ok.forEach((c) => {
+      const below = vals.filter((v) => v < c.raw[k]).length, same = vals.filter((v) => v === c.raw[k]).length;
+      (c.f ||= [])[k] = ok.length < 2 ? 0.5 : (below + (same - 1) / 2) / (ok.length - 1);
+    });
+  });
+}
+async function play(start) {
+  if (state.busy || !start) return;
+  busy(true); clearLog(); $("#word").value = start;
+  Object.assign(game, { on: false, pool: [], picks: [], seen: new Set(), round: 0, axis: -1, pair: [], grown: 0 });
+  say("This or That! Gathering mods to show you...", [], false, false);
+  try {
+    const pin = /pinterest\.|pin\.it\//.test(start), cat = $("#cat").value;
+    const r = pin ? await api().similar(start) : { name: `${start} ${cat}`, results: await api().search(start, cat) };
+    state.packName = r.name.replace(/\b\w/g, (c) => c.toUpperCase());
+    game.pool = r.results;
+    say(`Looking closely at ${game.pool.length} mods... squint squint`, [], false, false);
+    await each(game.pool, look, 8); spread(); busy(false);
+    if (game.pool.filter((c) => c.f).length < 4) return say("Hmm, not enough pictures to play with. Try another pin or word?");
+    const seed = game.pool.find((c) => c.this && c.f);
+    if (seed) { game.picks.push(seed); game.seen.add(seed.url); }
+    game.on = true; $("#vs").classList.add("on"); next();
+  } catch (e) { busy(false); say(`Aww: ${e.message || e}`); }
+}
+function next() {
+  const left = game.pool.filter((c) => c.f && !game.seen.has(c.url));
+  if (game.round >= game.max || left.length < 2) return finish();
+  const m = taste(), range = (k) => Math.max(...left.map((c) => c.f[k])) - Math.min(...left.map((c) => c.f[k]));
+  const axes = AXES.map((_, k) => k).filter((k) => range(k) > 0.2);
+  const axis = (game.axis = axes.length ? axes[game.round % axes.length] : 0);
+  const a = left.reduce((b, c) => (dist(c.f, m) < dist(b.f, m) ? c : b));         // closest to your taste so far
+  const score = (c) => Math.abs(c.f[axis] - a.f[axis]) - 0.5 * dist(c.f, m, axis); // same vibe, opposite on one quality
+  const b = left.filter((c) => c !== a).reduce((x, c) => (score(c) > score(x) ? c : x));
+  game.pair = Math.random() < 0.5 ? [a, b] : [b, a];
+  game.pair.forEach((c, k) => {
+    const el = $(k ? "#pb" : "#pa"); el.className = "pickc";
+    el.innerHTML = `<div class="img" style="background-image:url('${String(c.src).replace(/'/g, "%27")}')"></div>
+      <div class="t">${esc(c.title)}</div><div class="s">${esc(c.site)}</div><div class="key">${k ? "THAT →" : "← THIS"}</div>`;
+  });
+  $("#round").textContent = `ROUND ${game.round + 1} / ${game.max}`; meter();
+  say(game.round ? `${LINES[game.round % LINES.length]} This round: ${AXES[axis][0]} or ${AXES[axis][1]}?`
+                 : "Which one do you like more? Tap it, or use ← →!", [], false, false);
+}
+function choose(k) {
+  if (!game.on || !game.pair.length) return;
+  const [win, lose] = k ? [game.pair[1], game.pair[0]] : game.pair;
+  game.pair = []; game.picks.push(win); game.seen.add(win.url).add(lose.url); game.round++;
+  $(k ? "#pb" : "#pa").classList.add("win"); $(k ? "#pa" : "#pb").classList.add("lose"); cheer = 0.3; meter();
+  if (win.pin && game.grown < 4) grow(win.pin);
+  setTimeout(next, 450);
+}
+async function grow(pin) {  // pull in pins like the one just picked
+  game.grown++;
+  const fresh = await api().related(pin);
+  await each(fresh, look, 8);
+  const known = new Set(game.pool.map((c) => c.url)), added = fresh.filter((c) => !known.has(c.url));
+  game.pool.push(...added); spread();
+  if (added.length) ui.on({ kind: "log", agent: "pinterest", msg: `+${added.length} pins like your pick` });
+}
+function meter() {
+  if (!$("#meter").children.length) $("#meter").innerHTML = AXES.map(([lo, hi]) => `<div><span>${lo}</span><i></i><span>${hi}</span></div>`).join("");
+  taste().forEach((v, k) => { const row = $("#meter").children[k]; row.querySelector("i").style.setProperty("--v", v); row.classList.toggle("hot", game.on && k === game.axis); });
+}
+async function finish() {
+  game.on = false; $("#vs").classList.remove("on");
+  const m = taste(), ranked = game.pool.filter((c) => c.f).sort((a, b) => dist(a.f, m) - dist(b.f, m));
+  ranked.forEach((c) => (c.match = Math.round(100 * (1 - dist(c.f, m) / Math.sqrt(AXES.length)))));
+  state.results = [...ranked, ...game.pool.filter((c) => !c.f)];
+  state.picked = new Set([...state.results.keys()].slice(0, 20));
+  game.picks.forEach((c) => state.picked.add(state.results.indexOf(c)));
+  render(); cheer = 1;
+  const words = AXES.map(([lo, hi], k) => (m[k] < 0.38 ? lo : m[k] > 0.62 ? hi : "")).filter(Boolean);
+  const k = await say(`Your taste: ${words.join(", ") || "a little bit of everything"}! I picked your top ${state.picked.size}, best matches first.`,
+                      [`Download my ${state.picked.size}`, "Let me pick", "Play again"]);
+  if (k === 0) return download();
+  if (k === 1) return say("Click cards to pick or unpick, then hit DOWNLOAD PACK!");
+  play($("#word").value.trim());
+}
+function quit() { game.on = false; game.pair = []; $("#vs").classList.remove("on"); }
+$("#pa").onclick = () => choose(0);
+$("#pb").onclick = () => choose(1);
+$("#enough").onclick = () => game.on && finish();
+$("#quit").onclick = () => (quit(), hush());
+$("#vsgo").onclick = () => { const w = $("#word").value.trim(); w ? play(w) : say("Type a word or paste a pin first, then hit VS!"); };
+addEventListener("keydown", (e) => game.on && !keys && (e.key === "ArrowLeft" || e.key === "ArrowRight") && choose(e.key === "ArrowRight" ? 1 : 0));
+
 /* ---------- page bits ---------- */
 function busy(on) { state.busy = on; document.querySelectorAll(".go, #dl").forEach((b) => (b.disabled = on)); if (!on) updateCount(); }
 function render() {
   $("#grid").innerHTML = state.results.map((r, i) => `
     <div class="card ${state.picked.has(i) ? "on" : ""}" data-i="${i}" style="animation-delay:${i * 25}ms" title="${esc(r.url)}">
       <div class="img ${r.image ? "" : "none"}" ${r.image ? `style="background-image:url('${esc(r.image).replace(/'/g, "%27")}')"` : ""}>${r.image ? "" : "?"}</div>
-      ${r.this ? '<span class="me">THIS PIN</span>' : ""}<div class="t">${esc(r.title)}</div><div class="s">${esc(r.site)}</div><span class="badge">${state.picked.has(i) ? "✓" : ""}</span></div>`).join("");
+      ${r.match != null ? `<span class="me pct">${r.match}% MATCH</span>` : r.this ? '<span class="me">THIS PIN</span>' : ""}<div class="t">${esc(r.title)}</div><div class="s">${esc(r.site)}</div><span class="badge">${state.picked.has(i) ? "✓" : ""}</span></div>`).join("");
   updateCount();
 }
 function updateCount() {
