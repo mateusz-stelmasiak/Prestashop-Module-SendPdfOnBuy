@@ -18,7 +18,9 @@ DOWNLOADS = HOME / "Downloads"
 OUT = DOWNLOADS / "SimsGrab"
 CONF = HOME / ".simsgrab.json"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36"
-PIN_API = "https://widgets.pinterest.com/v3/pidgets/pins/info/?pin_ids="
+WIDGETS = "https://widgets.pinterest.com/v3/pidgets/"
+PIN_API = WIDGETS + "pins/info/?pin_ids="
+RELATED = "https://www.pinterest.com/resource/RelatedModulesResource/get/?data="
 SEARCH = "https://html.duckduckgo.com/html/?q="
 BING = "https://www.bing.com/search?q="
 OLLAMA = "http://localhost:11434"
@@ -297,6 +299,73 @@ def search(word, cat, model="", log=lambda agent, msg: None, see=lambda *a: None
             for (u, t), img in zip(items, images)]
 
 
+def pins_in(data, found):
+    """Collect every pin with an outside link anywhere in a Pinterest JSON reply, as result cards."""
+    if isinstance(data, dict):
+        imgs, link = data.get("images"), data.get("link") or ""
+        if isinstance(imgs, dict) and data.get("id") and link.startswith("http") and "pinterest." not in link:
+            img = next((imgs[k]["url"] for k in ("564x", "474x", "236x", "237x", "orig") if isinstance(imgs.get(k), dict)), "")
+            text = " ".join(str(data.get("grid_title") or data.get("title") or data.get("description") or "").split())
+            found.setdefault(link, {"url": link, "title": text[:90] or agent(link), "image": img,
+                                    "site": urlparse(link).netloc.removeprefix("www.")})
+        data = list(data.values())
+    for v in data if isinstance(data, list) else []:
+        pins_in(v, found)
+    return found
+
+
+def pinterest_json(url):
+    r = web.open(Request(url, headers={"User-Agent": UA, "Accept": "application/json", "X-Requested-With": "XMLHttpRequest",
+                                       "X-Pinterest-PWS-Handler": "www/pin/[id].js"}), timeout=30)
+    return json.load(r)
+
+
+def similar(url, model="", log=lambda agent, msg: None, see=lambda *a: None, n=50):
+    """Pin mode: the pasted pin, Pinterest's related pins, the rest of its board, then a web search on its
+    description. A board or profile link gives its pins. Returns (pack name, result cards)."""
+    if "pin.it/" in url:
+        url = fetch(url)[0].geturl()
+    path = [p for p in urlparse(url).path.split("/") if p]
+    found, name, words, sources = {}, "Pinterest Pack", "", []
+    if pid := re.search(r"/pin/(?:[^/]*--)?(\d+)", url):
+        pid = pid[1]
+        try:
+            info = pinterest_json(PIN_API + pid)
+            pins_in(info, found)
+            if found:
+                next(iter(found.values()))["this"] = True
+            pin = (info.get("data") or [{}])[0]
+            board = pin.get("board") or {}
+            name = board.get("name") or name
+            words = " ".join(str(pin.get("grid_title") or pin.get("description") or "").split()[:6])
+            sources.append(WIDGETS + "boards" + board["url"].rstrip("/") + "/pins/" if board.get("url") else "")
+        except (OSError, ValueError, AttributeError) as e:
+            log("pinterest", f"x {e}")
+        options = {"pin_id": pid, "context_pin_ids": [], "search_query": "", "source": "deep_linking",
+                   "top_level_source": "deep_linking", "top_level_source_depth": 1, "is_pdp": False}
+        sources.insert(0, RELATED + quote(json.dumps({"options": options, "context": {}})))
+    elif len(path) >= 2:
+        sources, name = [WIDGETS + f"boards/{path[0]}/{path[1]}/pins/"], path[1].replace("-", " ").title()
+    elif path:
+        sources, name = [WIDGETS + f"users/{path[0]}/pins/"], f"{path[0]}'s Pins"
+    for src in filter(None, sources):
+        log("pinterest", src.split("?")[0])
+        try:
+            before = len(found)
+            pins_in(pinterest_json(src), found)
+            log("pinterest", f"{len(found) - before} pins with links")
+        except (OSError, ValueError) as e:
+            log("pinterest", f"x {e}")
+    cards = list(found.values())[:n]
+    see(url, f"pinterest: {name}", [(c["title"], c["url"], 2.5 if c.get("this") else 2) for c in cards[:8]])
+    if len(cards) < n and words:
+        log("search", f"topping up with '{words}'")
+        cards += [c for c in search(words, "", model, log, see, n - len(cards)) if c["url"] not in found]
+    if not cards:
+        raise Fail("No pins with download links found there")
+    return clean(name), cards[:n]
+
+
 def loose_mods():
     """Mods sitting in Downloads: .package / .ts4script files and zips that contain them."""
     found = []
@@ -383,6 +452,10 @@ class Api:
 
     def search(self, word, cat):
         return search(word, cat, self._cfg["model"], self._log, self._see)
+
+    def similar(self, url):
+        name, cards = similar(url, self._cfg["model"], self._log, self._see)
+        return {"name": name, "results": cards}
 
     def grab(self, url):
         p = grab(url, self._log, self._cfg["model"], see=self._see)

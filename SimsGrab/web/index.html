@@ -53,6 +53,7 @@ main { position: relative; z-index: 1; display: grid; grid-template-columns: 1fr
 .card .img.none { display: grid; place-items: center; font: 26px var(--pix); color: var(--muted); }
 .card .t { padding: 6px 8px 2px; font-size: 18px; line-height: 1; height: 44px; overflow: hidden; }
 .card .s { padding: 0 8px 8px; font: 7px var(--pix); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card .me { position: absolute; top: 6px; left: 6px; font: 7px var(--pix); padding: 5px 6px; background: var(--pink); color: var(--night); }
 .card .badge { position: absolute; top: 6px; right: 6px; font: 9px var(--pix); padding: 5px 6px; background: var(--night); }
 .card.work .badge { color: var(--green); animation: blink .5s steps(1) infinite; }
 .card.done .badge { background: var(--green); color: var(--night); }
@@ -106,7 +107,7 @@ main { position: relative; z-index: 1; display: grid; grid-template-columns: 1fr
 <header>
   <div class="logo"><i></i>SIMSGRAB</div>
   <form class="line" id="line">
-    <input id="word" placeholder="one word: goth... or paste a pin" autocomplete="off" spellcheck="false">
+    <input id="word" placeholder="one word: goth... or paste a pin / board" autocomplete="off" spellcheck="false">
     <select id="cat"></select>
     <button class="go">GO</button>
   </form>
@@ -136,7 +137,7 @@ main { position: relative; z-index: 1; display: grid; grid-template-columns: 1fr
 import * as THREE from "./three.module.min.js";
 const $ = (s) => document.querySelector(s);
 const api = () => window.pywebview.api;
-const state = { results: [], picked: new Set(), busy: false, word: "", cat: "" };
+const state = { results: [], picked: new Set(), busy: false, packName: "" };
 
 /* ---------- pixel smoke while busy ---------- */
 const smoke = $("#smoke"), sx = smoke.getContext("2d"), puffs = [];
@@ -241,9 +242,9 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 /* ---------- flows ---------- */
 async function menu() {
   const k = await say("Hiii! I'm Plumbie, your mod buddy ✦ What are we hunting today?",
-                      ["Mods by vibe", "Grab a Pinterest pin", "Tidy my Downloads", "Just browsing"]);
+                      ["Mods by vibe", "Pinterest pin or board", "Tidy my Downloads", "Just browsing"]);
   if (k === 0) return vibe();
-  if (k === 1) return go(await say("Paste the pin link right here!", [], true), "");
+  if (k === 1) return go(await say("Paste a pin or a whole board right here!", [], true), "");
   if (k === 2) return tidy();
   hush();
 }
@@ -256,8 +257,9 @@ async function vibe() {
 }
 async function go(word, cat) {
   if (state.busy || !word) return;
-  if (/^(https?:\/\/|pin\.it\/|www\.)/.test(word)) return grabOne(word);
-  busy(true); state.word = word; state.cat = cat; clearLog();
+  if (/pinterest\.|pin\.it\//.test(word)) return pinMode(word);
+  if (/^(https?:\/\/|www\.)/.test(word)) return grabOne(word);
+  busy(true); state.packName = `${word} ${cat}`.trim().replace(/\b\w/g, (c) => c.toUpperCase()); clearLog();
   say(`On it! Sending my agents out for ${word} ${cat}...`, [], false, false);
   try {
     state.results = await api().search(word, cat);
@@ -270,10 +272,25 @@ async function go(word, cat) {
     vibe();
   } catch (e) { busy(false); say(`Aww, that didn't work: ${e.message || e}`); }
 }
+async function pinMode(url) {
+  busy(true); clearLog(); $("#word").value = url;
+  say("Ooh, a pin! Let me find all its twins...", [], false, false);
+  try {
+    const r = await api().similar(url);
+    state.results = r.results; state.packName = r.name;
+    state.picked = new Set(state.results.map((_, i) => i)); render(); busy(false);
+    const me = state.results.findIndex((x) => x.this);
+    const k = await say(`Found ${state.results.length} mods like this! Grab the whole ${r.name} pack?`,
+                        [`Download all ${state.results.length}`, ...(me >= 0 ? ["Just this pin"] : []), "Let me pick"]);
+    if (k === 0) return download();
+    if (me >= 0 && k === 1) { state.picked = new Set([me]); render(); return download(); }
+    say("Click cards to pick or unpick, then hit DOWNLOAD PACK!");
+  } catch (e) { busy(false); say(`Aww: ${e.message || e}. Want to try another pin?`); }
+}
 async function download() {
   if (state.busy || !state.picked.size) return;
   const items = [...state.picked].map((i) => [i, state.results[i].url, state.results[i].title]);
-  const name = `${state.word} ${state.cat}`.trim().replace(/\b\w/g, (c) => c.toUpperCase());
+  const name = state.packName || "Pack";
   busy(true); clearLog();
   say(`Downloading ${items.length} mods into your ${name} pack. Watch my agents click!`, [], false, false);
   try {
@@ -300,7 +317,7 @@ function render() {
   $("#grid").innerHTML = state.results.map((r, i) => `
     <div class="card ${state.picked.has(i) ? "on" : ""}" data-i="${i}" style="animation-delay:${i * 25}ms" title="${esc(r.url)}">
       <div class="img ${r.image ? "" : "none"}" ${r.image ? `style="background-image:url('${esc(r.image).replace(/'/g, "%27")}')"` : ""}>${r.image ? "" : "?"}</div>
-      <div class="t">${esc(r.title)}</div><div class="s">${esc(r.site)}</div><span class="badge">${state.picked.has(i) ? "✓" : ""}</span></div>`).join("");
+      ${r.this ? '<span class="me">THIS PIN</span>' : ""}<div class="t">${esc(r.title)}</div><div class="s">${esc(r.site)}</div><span class="badge">${state.picked.has(i) ? "✓" : ""}</span></div>`).join("");
   updateCount();
 }
 function updateCount() {
