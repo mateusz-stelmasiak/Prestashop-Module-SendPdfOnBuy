@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pyinstaller
-      - run: pyinstaller --onefile --windowed --name SimsGrab SimsGrab/simsgrab.py
+      - run: pyinstaller --onefile --windowed --name SimsGrab --add-data "SimsGrab/PressStart2P.ttf;." SimsGrab/simsgrab.py
       - uses: actions/upload-artifact@v4
         with:
           name: SimsGrab
