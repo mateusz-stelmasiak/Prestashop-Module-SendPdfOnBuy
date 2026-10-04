@@ -1,29 +1,35 @@
-"""SimsGrab: paste a Pinterest pin or type a vibe, get Sims mods installed.
+"""SimsGrab: one word or a Pinterest pin in, Sims mods installed.
 
 Agents follow the trail from a pin (or a web search) through the usual CC hosts
 (Tumblr, SimFileShare, MediaFire, Google Drive, Dropbox, Patreon, ...) until a
 real mod file turns up. An optional local model (Ollama) writes the searches and
-picks which link to click. Standard library only.
+picks which link to click. The window is web/index.html shown by pywebview.
 """
-import base64, heapq, html, itertools, json, math, os, queue, random, re, sys, threading, webbrowser, zipfile
+import base64, heapq, html, itertools, json, os, re, shutil, sys, threading, time, webbrowser, zipfile
+from concurrent.futures import ThreadPoolExecutor
 from http.cookiejar import CookieJar
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urljoin, urlparse
 from urllib.request import HTTPCookieProcessor, ProxyHandler, Request, build_opener
 
 HOME = Path.home()
-OUT = HOME / "Downloads" / "SimsGrab"
+HERE = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
+DOWNLOADS = HOME / "Downloads"
+OUT = DOWNLOADS / "SimsGrab"
 CONF = HOME / ".simsgrab.json"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36"
 PIN_API = "https://widgets.pinterest.com/v3/pidgets/pins/info/?pin_ids="
 SEARCH = "https://html.duckduckgo.com/html/?q="
+BING = "https://www.bing.com/search?q="
 OLLAMA = "http://localhost:11434"
 KINDS = {b"PK\x03\x04": ".zip", b"Rar!": ".rar", b"7z\xbc\xaf": ".7z", b"DBPF": ".package"}  # magic bytes
 EXTS = (*KINDS.values(), ".ts4script")
 HOSTS = ("simfileshare.net/download", "mediafire.com/file", "mediafire.com/?", "drive.google.com", "dropbox.com/s",
          "patreon.com/posts", "patreon.com/file", "patreon.com/media-u", "getfile.php", "curseforge.com/sims4/")
 JUNK = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".css", ".js", ".ico", ".mp4")
-CATEGORIES = ("hair", "clothes", "makeup", "furniture", "build", "gameplay", "poses")
+CATEGORIES = ("outfits", "hair", "makeup", "shoes", "accessories", "furniture", "build", "gameplay", "poses")
+SKIP = ("duckduckgo.", "bing.", "microsoft.", "pinterest.", "youtube.", "facebook.", "instagram.", "reddit.",
+        "tiktok.", "twitter.", "x.com", "wikipedia.")
 MAX_PAGES, MAX_DEPTH = 30, 3
 web = build_opener(HTTPCookieProcessor(CookieJar()))
 local = build_opener(ProxyHandler({}))
@@ -197,8 +203,9 @@ def install(path, mods, folder):
     return n
 
 
-def grab(url, log=lambda agent, msg: None, model="", goal="a Sims 4 mod", pages=MAX_PAGES):
-    """Follow the trail from url to a mod file. Returns the saved zip's path or raises Fail."""
+def grab(url, log=lambda agent, msg: None, model="", goal="a Sims 4 mod", pages=MAX_PAGES, see=lambda *a: None):
+    """Follow the trail from url to a mod file. Returns the saved zip's path or raises Fail.
+    see(url, title, [(link text, url, score)]) gets each page as the agent reads it."""
     url = url.strip() if url.strip().startswith("http") else "https://" + url.strip()
     if re.search(r"pinterest\.|pin\.it/", url):
         url = pin_source(url, log)
@@ -220,253 +227,211 @@ def grab(url, log=lambda agent, msg: None, model="", goal="a Sims 4 mod", pages=
             log(agent(u), f"x {e}")
             continue
         if depth < MAX_DEPTH:
-            found = [(s, l) for s, l in leads(r.geturl(), text) if s > 1 or depth == 0]
-            found += [(2.5, l) for l in pick(model, goal, anchors(r.geturl(), text), log)]
-            found = [(s, l) for s, l in found if l not in seen]
-            log(agent(u), f"{len(found)} leads")
-            for s, l in found:
+            links = anchors(r.geturl(), text)
+            best = {}
+            for s, l in [(s, l) for s, l in leads(r.geturl(), text) if s > 1 or depth == 0] + \
+                        [(2.5, l) for l in pick(model, goal, links, log)]:
+                if l not in seen:
+                    best[l] = max(s, best.get(l, 0))
+            ranked = sorted(best.items(), key=lambda x: -x[1])
+            labels = dict(links)
+            see(u, title(text), [(labels.get(l, ""), l, s) for l, s in ranked[:8]])
+            log(agent(u), f"{len(ranked)} leads")
+            for l, s in ranked:
                 heapq.heappush(todo, (-s, depth + 1, next(tick), l))
     raise Fail(f"No mod file found ({len(seen)} pages checked)")
 
 
-def pack(words, cats, model, log):
-    """Search the web for a themed set of mods. Returns (pack name, [zip paths])."""
-    cats = cats or ["cc"]
-    name, queries = (words or " ".join(cats)).title(), [f"sims 4 {c} cc {words} free download" for c in cats]
+def title(text):
+    m = re.search(r"<title[^>]*>(.*?)</title>", text, re.S | re.I)
+    return " ".join(html.unescape(m[1]).split())[:120] if m else ""
+
+
+def preview(url):
+    """The page's share image (og:image), for the result cards."""
+    try:
+        r, head = fetch(url)
+        text = (head + r.read(400_000)).decode("utf-8", "replace")
+    except OSError:
+        return ""
+    m = re.search(r'<meta[^>]+(?:property|name)=["\'](?:og:image|twitter:image)["\'][^>]*content=["\']([^"\']+)', text) \
+        or re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]*(?:property|name)=["\']og:image', text)
+    return urljoin(r.geturl(), html.unescape(m[1])) if m else ""
+
+
+def search(word, cat, model="", log=lambda agent, msg: None, see=lambda *a: None, n=50):
+    """Top n pages for one word + a category, as dicts for the result cards."""
+    topic = f"{word} {cat}".strip()
+    queries = [f"sims 4 {topic} cc {extra}".strip() for extra in
+               ("", "free download", "tumblr", "patreon", "maxis match", "alpha", "simfileshare", "pack", "lookbook")]
     if model:
         try:
-            ans = ask(model, f"Plan a Sims 4 custom content pack. Categories: {', '.join(cats)}. Style: {words or 'any'}."
-                             '\nAnswer JSON {"name": "short catchy pack name", "queries": [one web search query per '
-                             "category, aimed at free CC downloads on Tumblr, SimFileShare or Patreon]}")
-            name, queries = ans.get("name") or name, ans.get("queries") or queries
-        except (OSError, ValueError, KeyError, AttributeError) as e:
+            queries = ask(model, f"Write 8 different web searches that find free Sims 4 custom content for: {topic}. "
+                                 'Answer JSON {"queries": [...]}')["queries"][:8] + queries
+        except (OSError, ValueError, KeyError, TypeError) as e:
             log("ai", f"x {e}")
-    log("pack", f"{name}: {len(queries)} searches")
-    got = []
-    for q in queries[:8]:
+    found = {}
+    for q in queries:
+        if len(found) >= n:
+            break
         log("search", q)
-        try:
-            r, head = fetch(SEARCH + quote(q))
-            results = [(u, t) for u, t in anchors(r.geturl(), (head + r.read()).decode("utf-8", "replace"))
-                       if "duckduckgo." not in urlparse(u).netloc]
-        except OSError as e:
-            log("search", f"x {e}")
-            continue
-        for u in (pick(model, q, results, log) or [u for u, _ in results])[:2]:
+        hits = []
+        for engine in (SEARCH, BING):
             try:
-                got.append(grab(u, log, model, q, pages=12))
+                r, head = fetch(engine + quote(q))
+                hits = [(u, t) for u, t in anchors(r.geturl(), (head + r.read()).decode("utf-8", "replace"))
+                        if t and not any(s in urlparse(u).netloc for s in SKIP)]
+            except OSError as e:
+                log("search", f"x {e}")
+                continue
+            if hits:
+                see(engine + quote(q), f"search: {q}", [(t, u, 2) for u, t in hits[:8]])
                 break
-            except (Fail, OSError, ValueError) as e:
-                log("agent", f"x {e}")
-    if not got:
-        raise Fail("No mods found for that pack")
-    return name, got
+        for u, t in hits:
+            found.setdefault(u, t)
+    items = list(found.items())[:n]
+    log("search", f"{len(items)} results, fetching previews")
+    with ThreadPoolExecutor(12) as pool:
+        images = list(pool.map(preview, [u for u, _ in items]))
+    return [{"url": u, "title": t, "site": urlparse(u).netloc.removeprefix("www."), "image": img}
+            for (u, t), img in zip(items, images)]
 
 
-def run(text, cats, cfg, log):
-    """The one input line: a link grabs that mod, anything else builds a pack. Installs into Mods."""
-    if re.match(r"\s*(https?://|pin\.it/|www\.)", text):
-        name, paths = None, [grab(text, log, cfg["model"])]
-    else:
-        name, paths = pack(text.strip(), cats, cfg["model"], log)
-    files = sum(install(p, cfg["mods"], name or p.stem) for p in paths)
-    log("install", f"{files} files -> {Path(cfg['mods']) / 'SimsGrab'}")
-    return f"{name}: {len(paths)} mods" if name else paths[0].name
+def loose_mods():
+    """Mods sitting in Downloads: .package / .ts4script files and zips that contain them."""
+    found = []
+    for f in sorted(DOWNLOADS.glob("*")) if DOWNLOADS.is_dir() else []:
+        ext = f.suffix.lower()
+        if ext in (".package", ".ts4script"):
+            found.append(f)
+        elif ext == ".zip":
+            try:
+                with zipfile.ZipFile(f) as z:
+                    if any(n.lower().endswith((".package", ".ts4script")) for n in z.namelist()):
+                        found.append(f)
+            except (OSError, zipfile.BadZipFile):
+                pass
+    return found
 
 
-def ui():
-    import tkinter as tk
-    from tkinter import filedialog
+def tidy(mods):
+    """Move loose mods from Downloads into Mods/SimsGrab. Zips are unpacked, then kept in OUT."""
+    n = 0
+    for f in loose_mods():
+        if f.suffix.lower() == ".zip":
+            n += install(f, mods, f.stem)
+            dest = OUT / f.name
+        else:
+            n += 1
+            dest = Path(mods) / "SimsGrab" / ("" if f.suffix.lower() == ".ts4script" else "Downloads") / f.name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.unlink(missing_ok=True)
+        shutil.move(f, dest)
+    return n
 
-    font = Path(getattr(sys, "_MEIPASS", Path(__file__).parent)) / "PressStart2P.ttf"
-    if os.name == "nt":
-        import ctypes
-        ctypes.windll.gdi32.AddFontResourceExW(str(font), 0x10, 0)  # private pixel font
+
+class Api:
+    """Everything the page can call as pywebview.api.<name>(...). Each call runs on its own thread."""
+
+    def __init__(self):
+        self._win, self._cfg = None, settings()
+
+    def _emit(self, kind, **data):
+        self._win.evaluate_js(f"ui.on({json.dumps({'kind': kind, **data})})")
+
+    def _log(self, name, msg):
+        self._emit("log", agent=name, msg=msg)
+
+    def _see(self, url, page, links):
+        self._emit("see", url=url, title=page, links=[{"text": t, "url": u, "hot": s >= 2.5} for t, u, s in links])
+
+    def _store(self):
         try:
-            ctypes.windll.shcore.SetProcessDpiAwareness(1)  # crisp on high-DPI screens
-        except (AttributeError, OSError):
-            pass
-    NIGHT, PANEL, INK, MUTED, GREEN, DEEP, RED = "#12141C", "#1D2030", "#ECE8DA", "#7B8099", "#3DDC6F", "#1A6B39", "#FF5A4E"
-    PIX = lambda size: ("Press Start 2P", size)
-    cfg, events, busy, smoke = settings(), queue.Queue(), [False], []
-    choices = ["no AI"] + models()
-    root = tk.Tk()
-    root.title("SimsGrab")
-    root.configure(bg=NIGHT, padx=24, pady=20)
-    root.minsize(700, 560)
-    icon = tk.PhotoImage(width=32, height=32)  # plumbob
-    for y in range(2, 30):
-        w = round(9 * (1 - abs(y - 16) / 14))
-        icon.put(GREEN, to=(16 - w, y, 16 + w + 1, y + 1))
-    root.iconphoto(True, icon)
-
-    # header: pixel title, bobbing plumbob, smoke while the agents work
-    sky = tk.Canvas(root, width=700, height=130, bg=NIGHT, highlightthickness=0)
-    sky.pack(fill="x")
-    for y in range(0, 36, 4):
-        w = round(12 * (1 - abs(y - 16) / 18) / 4) * 4
-        sky.create_rectangle(26 - w, 30 + y, 26 + w, 34 + y, fill=GREEN if y < 18 else DEEP, width=0, tags="bob")
-    sky.create_text(67, 51, text="SIMSGRAB", font=PIX(26), fill=DEEP, anchor="w")
-    sky.create_text(64, 48, text="SIMSGRAB", font=PIX(26), fill=INK, anchor="w")
-    sky.create_text(66, 88, text="PASTE A PIN OR TYPE A VIBE", font=PIX(8), fill=MUTED, anchor="w")
-
-    def animate(t=itertools.count()):
-        f = next(t)
-        sky.move("bob", 0, 2 if f % 20 < 10 else -2) if f % 5 == 0 else None
-        for _ in range(2 if busy[0] else 0):
-            smoke.append([random.randrange(0, sky.winfo_width(), 4), 130, random.choice((8, 12, 16)), 1.0])
-        sky.delete("smoke")
-        for p in smoke:
-            p[1] -= 2
-            p[0] += round(math.sin(p[1] / 12)) * 2
-            p[3] -= 0.02
-            g = int(0x14 + (0x8A - 0x14) * max(p[3], 0))
-            x, y, s = p[0] // 4 * 4, int(p[1]) // 4 * 4, p[2]
-            sky.create_rectangle(x, y, x + s, y + s, fill=f"#{g:02x}{g:02x}{g + 12:02x}", width=0, tags="smoke")
-        smoke[:] = [p for p in smoke if p[3] > 0]
-        sky.tag_lower("smoke")
-        root.after(50, animate)
-
-    # category chips
-    chips, picked = tk.Frame(root, bg=NIGHT), set()
-    chips.pack(fill="x", pady=(4, 10))
-
-    def toggle(b, c):
-        picked.symmetric_difference_update({c})
-        b.config(bg=GREEN if c in picked else PANEL, fg=NIGHT if c in picked else MUTED)
-
-    flat = dict(relief="flat", bd=0, highlightthickness=0, cursor="hand2")
-    for c in CATEGORIES:
-        b = tk.Button(chips, text=c.upper(), font=PIX(7), bg=PANEL, fg=MUTED, activebackground=GREEN, padx=8, pady=6, **flat)
-        b.config(command=lambda b=b, c=c: toggle(b, c))
-        b.pack(side="left", padx=(0, 6))
-
-    # the one line
-    box = tk.Frame(root, bg=GREEN, padx=3, pady=3)
-    box.pack(fill="x")
-    entry = tk.Entry(box, font=("Consolas", 13), bg=PANEL, fg=INK, relief="flat", insertbackground=GREEN,
-                     insertwidth=8)
-    entry.pack(side="left", fill="both", expand=True, ipadx=10, ipady=10)
-    go = tk.Button(box, text="GO", font=PIX(12), bg=GREEN, fg=NIGHT, activebackground=NIGHT, activeforeground=GREEN,
-                   disabledforeground=DEEP, padx=22, **flat)
-    go.pack(side="left", fill="y")
-
-    # settings: model + Mods folder
-    row = tk.Frame(root, bg=NIGHT)
-    row.pack(fill="x", pady=(10, 0))
-    saved = cfg["model"] or "no AI"
-    model = tk.StringVar(value=saved if saved in choices else choices[-1])
-    tk.Label(row, text="AI", font=PIX(7), bg=NIGHT, fg=MUTED).pack(side="left")
-    menu = tk.OptionMenu(row, model, *choices)
-    menu.config(font=PIX(7), bg=PANEL, fg=INK, activebackground=GREEN, activeforeground=NIGHT, padx=8, **flat)
-    menu["menu"].config(font=PIX(7), bg=PANEL, fg=INK, activebackground=GREEN, activeforeground=NIGHT, bd=0)
-    menu.pack(side="left", padx=(8, 18))
-    tk.Label(row, text="MODS", font=PIX(7), bg=NIGHT, fg=MUTED).pack(side="left")
-    mods = tk.Button(row, text=cfg["mods"], font=("Consolas", 9), bg=NIGHT, fg=INK, activebackground=PANEL,
-                     activeforeground=INK, anchor="w", padx=8, **flat)
-    mods.pack(side="left", fill="x", expand=True)
-
-    def choose_mods():
-        d = filedialog.askdirectory(initialdir=cfg["mods"], title="Your Sims 4 Mods folder")
-        if d:
-            cfg["mods"] = d
-            mods.config(text=d)
-            store()
-
-    def store(*_):
-        cfg["model"] = "" if model.get() == "no AI" else model.get()
-        try:
-            CONF.write_text(json.dumps(cfg))
+            CONF.write_text(json.dumps(self._cfg))
         except OSError:
             pass
 
-    mods.config(command=choose_mods)
-    model.trace_add("write", store)
-    store()
+    def hello(self):
+        threading.Thread(target=self._watch, daemon=True).start()
+        return {"models": ["no AI"] + models(), "model": self._cfg["model"] or "no AI", "mods": self._cfg["mods"],
+                "categories": CATEGORIES}
 
-    log = tk.Text(root, font=("Consolas", 10), bg=NIGHT, fg=INK, relief="flat", bd=0, highlightthickness=0,
-                  width=80, height=11, wrap="none", state="disabled", cursor="arrow")
-    log.pack(fill="both", expand=True, pady=12)
-    log.tag_config("agent", foreground=MUTED)
-    log.tag_config("ai", foreground=GREEN)
-    log.tag_config("bad", foreground=RED)
+    def _watch(self):
+        """Tell the page whenever new loose mods show up in Downloads."""
+        told = set()
+        while True:
+            now = {str(f) for f in loose_mods()}
+            if now - told:
+                self._emit("loose", count=len(now), names=[Path(f).name for f in sorted(now)][:4])
+            told = now
+            time.sleep(20)
 
-    def open_mods():
-        p = Path(cfg["mods"]) / "SimsGrab"
+    def setting(self, key, value):
+        self._cfg[key] = "" if value == "no AI" else value
+        self._store()
+
+    def choose_mods(self):
+        picked = self._win.create_file_dialog(webview.FileDialog.FOLDER, directory=self._cfg["mods"])
+        if picked:
+            self.setting("mods", picked[0])
+        return self._cfg["mods"]
+
+    def open_mods(self):
+        p = Path(self._cfg["mods"]) / "SimsGrab"
         p.mkdir(parents=True, exist_ok=True)
         os.startfile(p) if os.name == "nt" else webbrowser.open(p.as_uri())
 
-    bar = tk.Frame(root, bg=PANEL)
-    bar.pack(fill="x")
-    status = tk.Label(bar, text="READY", font=PIX(8), bg=PANEL, fg=INK, anchor="w", padx=14, pady=12)
-    status.pack(side="left", fill="x", expand=True)
-    folder = tk.Button(bar, text="OPEN MODS", font=PIX(7), bg=PANEL, fg=INK, activebackground=INK,
-                       activeforeground=NIGHT, padx=14, command=open_mods, **flat)
-    folder.pack(side="right", fill="y")
+    def search(self, word, cat):
+        return search(word, cat, self._cfg["model"], self._log, self._see)
 
-    def show(text, bg, fg=INK):
-        bar.config(bg=bg)
-        status.config(text=text, bg=bg, fg=fg)
-        folder.config(bg=bg, fg=fg)
+    def grab(self, url):
+        p = grab(url, self._log, self._cfg["model"], see=self._see)
+        return {"name": p.name, "files": install(p, self._cfg["mods"], p.stem)}
 
-    def write(name, msg):
-        log.config(state="normal")
-        log.insert("end", f"{name:<14}", "ai" if name == "ai" else "agent")
-        log.insert("end", msg + "\n", "bad" if msg.startswith("x ") else ())
-        log.see("end")
-        log.config(state="disabled")
+    def download(self, items, name):
+        """Grab a pack of pages four at a time, install into Mods/SimsGrab/<name>, zip the pack."""
+        name = clean(name) or "Pack"
 
-    def work(text, cats):
-        try:
-            events.put(("done", run(text, cats, dict(cfg), lambda a, m: events.put(("log", a, m)))))
-        except Exception as e:
-            events.put(("fail", e))
+        def one(item):
+            i, url, label = item
+            self._emit("item", i=i, state="work")
+            try:
+                p = grab(url, self._log, self._cfg["model"], f"the download for the Sims 4 CC '{label}'", 12, self._see)
+                ok = install(p, self._cfg["mods"], name) > 0
+            except Exception as e:
+                self._log("agent", f"x {e}")
+                ok = False
+            self._emit("item", i=i, state="done" if ok else "fail")
+            return ok
 
-    def start(*_):
-        text = entry.get().strip()
-        if not (text or picked) or busy[0]:
-            return
-        busy[0] = True
-        go.config(state="disabled")
-        log.config(state="normal")
-        log.delete("1.0", "end")
-        log.config(state="disabled")
-        show("WORKING...", PANEL)
-        threading.Thread(target=work, args=(text, sorted(picked)), daemon=True).start()
+        with ThreadPoolExecutor(4) as pool:
+            ok = sum(pool.map(one, items))
+        folder = Path(self._cfg["mods"]) / "SimsGrab" / name
+        if folder.is_dir():
+            OUT.mkdir(parents=True, exist_ok=True)
+            shutil.make_archive(str(OUT / name), "zip", folder)
+        return {"ok": ok, "total": len(items), "name": name}
 
-    def poll():
-        while not events.empty():
-            kind, arg, *rest = events.get()
-            if kind == "log":
-                write(arg, *rest)
-                continue
-            busy[0] = False
-            go.config(state="normal")
-            show(f"INSTALLED  {arg}", GREEN, NIGHT) if kind == "done" else show(f"FAILED  {arg}", RED, NIGHT)
-        root.after(80, poll)
+    def tidy(self):
+        return tidy(self._cfg["mods"])
 
-    def autopaste(_):
-        try:
-            clip = root.clipboard_get().strip()
-        except tk.TclError:
-            return
-        if not entry.get() and re.match(r"https?://\S*(pinterest\.|pin\.it/)", clip):
-            entry.insert(0, clip)
 
-    go.config(command=start)
-    entry.bind("<Return>", start)
-    root.bind("<FocusIn>", autopaste)
-    entry.focus_set()
-    poll()
-    animate()
-    root.mainloop()
+def app():
+    global webview
+    import webview
+
+    api = Api()
+    api._win = webview.create_window("SimsGrab", str(HERE / "web" / "index.html"), js_api=api, width=1240, height=800,
+                                     min_size=(960, 640), background_color="#12141C")
+    webview.start(http_server=True)
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        ui()
+        app()
     else:
         try:
-            print(run(" ".join(sys.argv[1:]), [], settings(), lambda a, m: print(f"{a:<14}{m}")))
+            p = grab(sys.argv[1], lambda a, m: print(f"{a:<14}{m}"))
+            print(p, install(p, settings()["mods"], p.stem), "files installed")
         except Fail as e:
             sys.exit(f"FAILED  {e}")

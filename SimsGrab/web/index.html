@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SimsGrab</title>
+<link rel="icon" href="data:,">
+<style>
+@font-face { font-family: "Press Start 2P"; src: url("PressStart2P.ttf"); }
+@font-face { font-family: "VT323"; src: url("VT323.ttf"); }
+:root {
+  --night: #12141c; --panel: #1d2030; --line: #2c3046; --ink: #ece8da; --muted: #7b8099;
+  --green: #3ddc6f; --deep: #1a6b39; --red: #ff5a4e; --pink: #ff8fc7; --paper: #f8f6ee;
+  --pix: "Press Start 2P", monospace; --vt: "VT323", monospace;
+}
+* { box-sizing: border-box; margin: 0; }
+body { background: var(--night); color: var(--ink); font: 20px/1.1 var(--vt); height: 100vh; overflow: hidden;
+       display: grid; grid-template-rows: auto 1fr; user-select: none; }
+button, input, select { font: inherit; color: inherit; border: 0; border-radius: 0; outline: none; }
+button { cursor: pointer; }
+#smoke { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; image-rendering: pixelated; z-index: 0; }
+
+/* the one line */
+header { position: relative; z-index: 1; display: flex; align-items: center; gap: 14px; padding: 16px 20px; }
+.logo { font: 22px var(--pix); letter-spacing: 1px; text-shadow: 3px 3px 0 var(--deep); display: flex; gap: 12px; align-items: center; }
+.logo i { width: 14px; height: 22px; background: var(--green); clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+          animation: bob 1.2s steps(2) infinite; }
+@keyframes bob { 50% { transform: translateY(-4px); } }
+.line { flex: 1; display: flex; border: 3px solid var(--green); background: var(--panel); min-width: 0; }
+.line input { flex: 1; min-width: 0; background: none; padding: 10px 14px; font-size: 26px; caret-color: var(--green); }
+.line input::placeholder { color: var(--muted); }
+.line select, .bar select { background: var(--night); font: 10px var(--pix); padding: 0 10px; border-left: 3px solid var(--green); }
+.go { background: var(--green); color: var(--night); font: 14px var(--pix); padding: 0 22px; }
+.go:hover, .go:focus-visible { background: var(--ink); }
+.bar { display: flex; gap: 8px; align-items: center; font: 8px var(--pix); color: var(--muted); }
+.bar select { border: 0; height: 34px; color: var(--ink); background: var(--panel); }
+.bar button { background: var(--panel); height: 34px; padding: 0 10px; max-width: 180px; overflow: hidden;
+              text-overflow: ellipsis; white-space: nowrap; font: 16px var(--vt); color: var(--ink); }
+.bar button:hover { background: var(--line); }
+
+/* results + agent browser */
+main { position: relative; z-index: 1; display: grid; grid-template-columns: 1fr 380px; gap: 16px; padding: 0 20px 150px; min-height: 0; }
+.results { display: flex; flex-direction: column; min-height: 0; }
+.tools { display: flex; gap: 8px; align-items: center; font: 9px var(--pix); color: var(--muted); padding-bottom: 10px; }
+.tools .count { flex: 1; }
+.tools button { background: var(--panel); padding: 9px 10px; font: 9px var(--pix); }
+.tools button.big { background: var(--green); color: var(--night); }
+.tools button:disabled { opacity: .4; cursor: default; }
+.grid { flex: 1; overflow: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; align-content: start; padding-right: 4px; }
+.card { position: relative; background: var(--panel); border: 3px solid var(--line); cursor: pointer; display: flex; flex-direction: column;
+        animation: pop .25s steps(3) backwards; }
+.card.on { border-color: var(--green); }
+.card .img { aspect-ratio: 1; background: var(--line) center/cover; image-rendering: auto; }
+.card .img.none { display: grid; place-items: center; font: 26px var(--pix); color: var(--muted); }
+.card .t { padding: 6px 8px 2px; font-size: 18px; line-height: 1; height: 44px; overflow: hidden; }
+.card .s { padding: 0 8px 8px; font: 7px var(--pix); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card .badge { position: absolute; top: 6px; right: 6px; font: 9px var(--pix); padding: 5px 6px; background: var(--night); }
+.card.work .badge { color: var(--green); animation: blink .5s steps(1) infinite; }
+.card.done .badge { background: var(--green); color: var(--night); }
+.card.fail { opacity: .55; } .card.fail .badge { background: var(--red); color: var(--night); }
+@keyframes pop { from { transform: scale(.6); opacity: 0; } }
+@keyframes blink { 50% { opacity: 0; } }
+.empty { grid-column: 1/-1; margin-top: 12vh; text-align: center; font: 18px/2 var(--pix); color: var(--muted); }
+.empty b { color: var(--green); font-weight: normal; }
+::-webkit-scrollbar { width: 10px; } ::-webkit-scrollbar-thumb { background: var(--line); }
+
+.browser { display: flex; flex-direction: column; min-height: 0; border: 3px solid var(--line); background: var(--panel); }
+.chrome { display: flex; gap: 6px; align-items: center; padding: 8px; background: var(--line); }
+.chrome i { width: 9px; height: 9px; background: var(--muted); } .chrome i:first-child { background: var(--red); }
+.chrome .url { flex: 1; background: var(--night); padding: 4px 8px; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.page { position: relative; padding: 12px; flex: 0 0 auto; min-height: 210px; }
+.page h3 { font: 9px/1.6 var(--pix); margin-bottom: 10px; color: var(--ink); height: 30px; overflow: hidden; }
+.page ul { padding: 0; }
+.page li { list-style: none; font-size: 18px; padding: 2px 6px 2px 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); position: relative; }
+.page li.hot { color: var(--green); }
+.page li.click { background: var(--green); color: var(--night); }
+.page li.click::before { content: "▶"; position: absolute; left: 4px; font-size: 14px; }
+#mouse { position: absolute; width: 16px; height: 22px; left: 300px; top: 160px; transition: left .45s steps(6), top .45s steps(6);
+         background: var(--ink); clip-path: polygon(0 0, 0 80%, 28% 62%, 48% 100%, 64% 92%, 46% 56%, 80% 56%); pointer-events: none; }
+.log { flex: 1; overflow: auto; border-top: 3px solid var(--line); padding: 8px 10px; font-size: 16px; line-height: 1.15; min-height: 0; }
+.log div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.log b { display: inline-block; width: 96px; color: var(--muted); font-weight: normal; }
+.log .ai b { color: var(--green); } .log .bad { color: var(--red); }
+
+/* Plumbie + Pokémon-style dialog */
+#plumbie { position: fixed; right: 12px; bottom: 6px; width: 230px; height: 270px; z-index: 3; image-rendering: pixelated; cursor: pointer;
+           transform: translateY(110%); transition: transform .5s cubic-bezier(.3, 1.6, .5, 1); }
+#plumbie.in { transform: none; }
+.dialog { position: fixed; left: 20px; right: 250px; bottom: 16px; z-index: 2; background: var(--paper); color: #24263a;
+          border: 4px solid #24263a; box-shadow: inset 0 0 0 3px var(--paper), inset 0 0 0 6px #6c7393, 6px 6px 0 #0008;
+          padding: 16px 22px; min-height: 108px; font-size: 30px; line-height: 1.05; display: none; }
+.dialog.show { display: block; animation: pop .2s steps(3); }
+.dialog .who { position: absolute; top: -18px; left: 16px; background: var(--pink); color: #24263a; font: 9px var(--pix);
+               padding: 6px 10px; border: 3px solid #24263a; }
+.dialog .more { position: absolute; right: 16px; bottom: 8px; font-size: 22px; animation: blink .6s steps(1) infinite; display: none; }
+.dialog input { display: none; margin-top: 8px; width: 100%; background: #e6e2d4; color: #24263a; padding: 4px 10px; font-size: 28px; border: 3px solid #24263a; }
+.choices { position: fixed; right: 250px; bottom: 150px; z-index: 2; background: var(--paper); color: #24263a; border: 4px solid #24263a;
+           box-shadow: inset 0 0 0 3px var(--paper), inset 0 0 0 6px #6c7393, 6px 6px 0 #0008; padding: 12px 18px 12px 12px; display: none; }
+.choices.show { display: block; animation: pop .2s steps(3); }
+.choices div { font-size: 28px; padding: 1px 0 1px 26px; position: relative; cursor: pointer; white-space: nowrap; }
+.choices div.sel::before { content: "▶"; position: absolute; left: 2px; font-size: 22px; top: 4px; }
+</style>
+</head>
+<body>
+<canvas id="smoke"></canvas>
+
+<header>
+  <div class="logo"><i></i>SIMSGRAB</div>
+  <form class="line" id="line">
+    <input id="word" placeholder="one word: goth... or paste a pin" autocomplete="off" spellcheck="false">
+    <select id="cat"></select>
+    <button class="go">GO</button>
+  </form>
+  <div class="bar">AI <select id="model"></select> MODS <button id="mods" title="Change Mods folder"></button>
+    <button id="open" title="Open Mods folder">📂</button></div>
+</header>
+
+<main>
+  <section class="results">
+    <div class="tools"><span class="count" id="count">NO RESULTS YET</span>
+      <button id="all">ALL</button><button id="none">NONE</button>
+      <button class="big" id="dl" disabled>DOWNLOAD PACK ▶</button></div>
+    <div class="grid" id="grid"><p class="empty">ONE WORD.<br><b>50 MODS.</b><br>ONE CLICK.</p></div>
+  </section>
+  <section class="browser">
+    <div class="chrome"><i></i><i></i><i></i><div class="url" id="url">agent browser idle</div></div>
+    <div class="page"><h3 id="ptitle">WAITING FOR A MISSION</h3><ul id="links"></ul><div id="mouse"></div></div>
+    <div class="log" id="log"></div>
+  </section>
+</main>
+
+<div class="choices" id="choices"></div>
+<div class="dialog" id="dialog"><span class="who">PLUMBIE</span><span id="say"></span><input id="ask" spellcheck="false"><span class="more">▼</span></div>
+<canvas id="plumbie" width="115" height="135" title="Talk to Plumbie"></canvas>
+
+<script type="module">
+import * as THREE from "./three.module.min.js";
+const $ = (s) => document.querySelector(s);
+const api = () => window.pywebview.api;
+const state = { results: [], picked: new Set(), busy: false, word: "", cat: "" };
+
+/* ---------- pixel smoke while busy ---------- */
+const smoke = $("#smoke"), sx = smoke.getContext("2d"), puffs = [];
+function smokeLoop() {
+  const w = (smoke.width = innerWidth >> 2), h = (smoke.height = innerHeight >> 2);
+  if (state.busy) for (let i = 0; i < 2; i++) puffs.push({ x: Math.random() * w, y: h, s: 2 + (Math.random() * 3 | 0), life: 1 });
+  for (const p of puffs) {
+    p.y -= 0.6; p.x += Math.sin(p.y / 9) * 0.5; p.life -= 0.006;
+    const g = 20 + 110 * Math.max(p.life, 0);
+    sx.fillStyle = `rgba(${g},${g},${g + 14},${Math.min(p.life * 1.4, .9)})`;
+    sx.fillRect(p.x | 0, p.y | 0, p.s, p.s);
+  }
+  puffs.splice(0, puffs.length, ...puffs.filter((p) => p.life > 0 && p.y > -4));
+  requestAnimationFrame(smokeLoop);
+}
+smokeLoop();
+
+/* ---------- Plumbie, a little toon girl with a plumbob ---------- */
+const cv = $("#plumbie"), renderer = new THREE.WebGLRenderer({ canvas: cv, alpha: true, antialias: false });
+renderer.setSize(cv.width, cv.height, false);
+const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(30, cv.width / cv.height, 0.1, 50);
+camera.position.set(0, 1.45, 7.4); camera.lookAt(0, 1.3, 0);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x554466, 1.6));
+const sun = new THREE.DirectionalLight(0xffffff, 2.2); sun.position.set(2, 4, 5); scene.add(sun);
+const ramp = new THREE.DataTexture(new Uint8Array([90, 90, 90, 255, 180, 180, 180, 255, 255, 255, 255, 255]), 3, 1);
+ramp.magFilter = ramp.minFilter = THREE.NearestFilter; ramp.needsUpdate = true;
+const toon = (color, extra = {}) => new THREE.MeshToonMaterial({ color, gradientMap: ramp, ...extra });
+const ball = (r, mat, x, y, z, sxyz = [1, 1, 1], parent) => {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(r, 18, 14), mat);
+  m.position.set(x, y, z); m.scale.set(...sxyz); (parent || girl).add(m); return m;
+};
+const girl = new THREE.Group(); scene.add(girl);
+const skin = toon(0xffdcc8), hairM = toon(0x6b3fa0), dressM = toon(0xff8fc7), dark = toon(0x24263a);
+const dress = new THREE.Mesh(new THREE.ConeGeometry(0.62, 1.05, 10), dressM); dress.position.y = 0.55; girl.add(dress);
+ball(0.13, skin, -0.5, 0.75, 0.15); ball(0.13, skin, 0.5, 0.75, 0.15);           // hands
+ball(0.14, dark, -0.2, 0.02, 0.1, [1, 0.6, 1.3]); ball(0.14, dark, 0.2, 0.02, 0.1, [1, 0.6, 1.3]); // shoes
+const head = new THREE.Group(); head.position.y = 1.62; girl.add(head);
+ball(0.66, skin, 0, 0, 0, [1, 0.94, 0.95], head);
+ball(0.71, hairM, 0, 0.1, -0.08, [1.02, 0.9, 0.98], head);                      // hair shell (face cut by the skin ball)
+const fringe = ball(0.6, hairM, 0, 0.32, 0.22, [1.05, 0.5, 0.75], head);
+ball(0.27, hairM, -0.62, 0.42, -0.1, [1, 1, 1], head); ball(0.27, hairM, 0.62, 0.42, -0.1, [1, 1, 1], head); // buns
+const eyes = [-0.24, 0.24].map((x) => {
+  const e = ball(0.1, dark, x, -0.06, 0.6, [0.9, 1.35, 0.6], head);
+  ball(0.035, toon(0xffffff), 0.03, 0.04, 0.08, [1, 1, 1], e); return e;
+});
+[-0.42, 0.42].forEach((x) => ball(0.09, toon(0xff6fa5, { transparent: true, opacity: 0.75 }), x, -0.22, 0.52, [1.3, 0.6, 0.4], head));
+const mouth = ball(0.06, toon(0xc0395a), 0, -0.3, 0.6, [1.2, 0.5, 0.5], head);
+const bob = new THREE.Mesh(new THREE.OctahedronGeometry(0.2, 0), toon(0x3ddc6f, { emissive: 0x1a6b39 }));
+bob.scale.y = 1.7; scene.add(bob);
+let talking = 0, cheer = 0, blink = 0;
+renderer.setAnimationLoop((ms) => {
+  const t = ms / 1000;
+  girl.position.y = Math.sin(t * 2.4) * 0.07 + (cheer > 0 ? Math.abs(Math.sin(cheer * 9)) * 0.5 : 0);
+  girl.rotation.y = Math.sin(t * 0.8) * 0.25 + (cheer > 0 ? (1 - cheer) * Math.PI * 2 : 0);
+  head.rotation.z = Math.sin(t * 1.3) * 0.06 + (talking ? Math.sin(t * 14) * 0.04 : 0);
+  mouth.scale.y = talking ? 0.4 + Math.abs(Math.sin(t * 16)) * 1.1 : 0.5;
+  if ((blink -= 1 / 60) < -3 - Math.random()) blink = 0.12;
+  eyes.forEach((e) => (e.scale.y = blink > 0 ? 0.15 : 1.35));
+  bob.position.set(0, 2.85 + girl.position.y + Math.sin(t * 3) * 0.06, 0); bob.rotation.y = t * 1.8;
+  cheer = Math.max(0, cheer - 1 / 70);
+  renderer.render(scene, camera);
+});
+cv.onclick = () => !state.busy && menu();
+
+/* ---------- Pokémon-style dialog: say(text, choices?, ask?) ---------- */
+let queue = Promise.resolve();
+function say(text, choices = [], ask = false, wait = true) {
+  const run = queue.then(() => new Promise((done) => {
+    const d = $("#dialog"), box = $("#say"), more = d.querySelector(".more"), inp = $("#ask"), ch = $("#choices");
+    cv.classList.add("in"); d.classList.add("show"); ch.classList.remove("show"); more.style.display = inp.style.display = "none";
+    box.textContent = ""; talking = 1; let i = 0;
+    const finish = () => {
+      talking = 0; box.textContent = text;
+      if (ask) { inp.style.display = "block"; inp.value = ""; inp.focus(); inp.onkeydown = (e) => e.key === "Enter" && inp.value.trim() && (close(), done(inp.value.trim())); }
+      else if (choices.length) pickFrom(choices, (k) => (close(), done(k)));
+      else if (!wait) done();
+      else { more.style.display = "block"; d.onclick = () => (close(), done()); keys = (e) => e.key === "Enter" && d.onclick(); }
+    };
+    const close = () => { d.onclick = null; keys = null; inp.onkeydown = null; ch.classList.remove("show"); };
+    const type = () => (i < text.length && talking ? ((box.textContent = text.slice(0, ++i)), setTimeout(type, 22)) : finish());
+    d.onclick = () => (i = text.length); type();
+  }));
+  queue = run.catch(() => {});
+  return run;
+}
+let keys = null;
+addEventListener("keydown", (e) => keys && keys(e));
+function pickFrom(choices, done) {
+  const ch = $("#choices"); let sel = 0;
+  const draw = () => (ch.innerHTML = choices.map((c, k) => `<div class="${k === sel ? "sel" : ""}" data-k="${k}">${esc(c)}</div>`).join(""));
+  draw(); ch.classList.add("show");
+  ch.onclick = (e) => e.target.dataset.k && done(+e.target.dataset.k);
+  ch.onmousemove = (e) => e.target.dataset.k && +e.target.dataset.k !== sel && ((sel = +e.target.dataset.k), draw());
+  keys = (e) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { sel = (sel + (e.key === "ArrowDown" ? 1 : choices.length - 1)) % choices.length; draw(); e.preventDefault(); }
+    if (e.key === "Enter") done(sel);
+  };
+}
+const hush = () => { $("#dialog").classList.remove("show"); $("#choices").classList.remove("show"); };
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+/* ---------- flows ---------- */
+async function menu() {
+  const k = await say("Hiii! I'm Plumbie, your mod buddy ✦ What are we hunting today?",
+                      ["Mods by vibe", "Grab a Pinterest pin", "Tidy my Downloads", "Just browsing"]);
+  if (k === 0) return vibe();
+  if (k === 1) return go(await say("Paste the pin link right here!", [], true), "");
+  if (k === 2) return tidy();
+  hush();
+}
+async function vibe() {
+  const word = await say("Ooh! Give me ONE word. Like... goth!", [], true);
+  const cats = state.categories;
+  const k = await say(`${word.toUpperCase()}! Love it. What kind of mods?`, cats.map((c) => c.toUpperCase()));
+  $("#word").value = word; $("#cat").value = cats[k];
+  go(word, cats[k]);
+}
+async function go(word, cat) {
+  if (state.busy || !word) return;
+  if (/^(https?:\/\/|pin\.it\/|www\.)/.test(word)) return grabOne(word);
+  busy(true); state.word = word; state.cat = cat; clearLog();
+  say(`On it! Sending my agents out for ${word} ${cat}...`, [], false, false);
+  try {
+    state.results = await api().search(word, cat);
+    state.picked = new Set(state.results.map((_, i) => i)); render(); busy(false);
+    if (!state.results.length) return say("Hmm, the web came back empty. Try another word?");
+    const k = await say(`Found ${state.results.length} ${word} ${cat} mods! Want the whole pack?`,
+                        [`Download all ${state.results.length}`, "Let me pick", "Search again"]);
+    if (k === 0) return download();
+    if (k === 1) return say("Click cards to pick or unpick, then hit DOWNLOAD PACK!");
+    vibe();
+  } catch (e) { busy(false); say(`Aww, that didn't work: ${e.message || e}`); }
+}
+async function download() {
+  if (state.busy || !state.picked.size) return;
+  const items = [...state.picked].map((i) => [i, state.results[i].url, state.results[i].title]);
+  const name = `${state.word} ${state.cat}`.trim().replace(/\b\w/g, (c) => c.toUpperCase());
+  busy(true); clearLog();
+  say(`Downloading ${items.length} mods into your ${name} pack. Watch my agents click!`, [], false, false);
+  try {
+    const r = await api().download(items, name);
+    busy(false); cheer = 1;
+    const k = await say(`Yay! ${r.ok} of ${r.total} mods are in Mods/SimsGrab/${r.name}. A pack zip is in Downloads too!`,
+                        ["Open Mods folder", "Find more", "Thanks Plumbie!"]);
+    if (k === 0) api().open_mods(); else if (k === 1) vibe(); else hush();
+  } catch (e) { busy(false); say(`Oh no: ${e.message || e}`); }
+}
+async function grabOne(url) {
+  busy(true); clearLog(); say("Following the pin... hold my plumbob!", [], false, false);
+  try { const r = await api().grab(url); busy(false); cheer = 1; await say(`Got it! ${r.name}, ${r.files} files installed in your Mods.`); hush(); }
+  catch (e) { busy(false); say(`FAILED: ${e.message || e}. Some sites hide behind logins, sorry!`); }
+}
+async function tidy() {
+  try { const n = await api().tidy(); cheer = n ? 1 : 0; await say(n ? `Done! Moved ${n} mod files into your Mods folder.` : "Your Downloads are already squeaky clean!"); hush(); }
+  catch (e) { say(`Couldn't tidy: ${e.message || e}`); }
+}
+
+/* ---------- page bits ---------- */
+function busy(on) { state.busy = on; document.querySelectorAll(".go, #dl").forEach((b) => (b.disabled = on)); if (!on) updateCount(); }
+function render() {
+  $("#grid").innerHTML = state.results.map((r, i) => `
+    <div class="card ${state.picked.has(i) ? "on" : ""}" data-i="${i}" style="animation-delay:${i * 25}ms" title="${esc(r.url)}">
+      <div class="img ${r.image ? "" : "none"}" ${r.image ? `style="background-image:url('${esc(r.image).replace(/'/g, "%27")}')"` : ""}>${r.image ? "" : "?"}</div>
+      <div class="t">${esc(r.title)}</div><div class="s">${esc(r.site)}</div><span class="badge">${state.picked.has(i) ? "✓" : ""}</span></div>`).join("");
+  updateCount();
+}
+function updateCount() {
+  $("#count").textContent = state.results.length ? `${state.results.length} RESULTS · ${state.picked.size} PICKED` : "NO RESULTS YET";
+  $("#dl").disabled = state.busy || !state.picked.size;
+  $("#dl").textContent = `DOWNLOAD PACK (${state.picked.size}) ▶`;
+}
+$("#grid").onclick = (e) => {
+  const c = e.target.closest(".card"); if (!c || state.busy) return;
+  const i = +c.dataset.i; state.picked.has(i) ? state.picked.delete(i) : state.picked.add(i);
+  c.classList.toggle("on"); c.querySelector(".badge").textContent = state.picked.has(i) ? "✓" : ""; updateCount();
+};
+$("#all").onclick = () => !state.busy && ((state.picked = new Set(state.results.map((_, i) => i))), render());
+$("#none").onclick = () => !state.busy && (state.picked.clear(), render());
+$("#dl").onclick = download;
+$("#line").onsubmit = (e) => { e.preventDefault(); go($("#word").value.trim(), $("#cat").value); };
+$("#model").onchange = (e) => api().setting("model", e.target.value);
+$("#mods").onclick = async () => setMods(await api().choose_mods());
+$("#open").onclick = () => api().open_mods();
+const setMods = (p) => { $("#mods").textContent = p.split(/[\\/]/).slice(-2).join("/"); $("#mods").title = p; };
+const clearLog = () => ($("#log").innerHTML = "");
+
+/* events pushed from Python: ui.on({kind, ...}) */
+window.ui = { on(ev) {
+  if (ev.kind === "log") {
+    const row = document.createElement("div"); row.className = (ev.agent === "ai" ? "ai " : "") + (ev.msg.startsWith("x ") ? "bad" : "");
+    row.innerHTML = `<b>${esc(ev.agent)}</b>${esc(ev.msg)}`; $("#log").append(row); $("#log").scrollTop = 1e9;
+  } else if (ev.kind === "see") {
+    $("#url").textContent = ev.url; $("#ptitle").textContent = ev.title || ev.url;
+    $("#links").innerHTML = ev.links.map((l, k) => `<li class="${k === 0 ? "click" : l.hot ? "hot" : ""}">${esc(l.text || l.url)}</li>`).join("");
+    const first = $("#links li"); if (first) Object.assign($("#mouse").style, { left: `${Math.min(first.offsetLeft + 160, 300)}px`, top: `${first.offsetTop + 10}px` });
+  } else if (ev.kind === "item") {
+    const c = $(`.card[data-i="${ev.i}"]`); if (!c) return;
+    c.classList.remove("work", "done", "fail"); c.classList.add(ev.state);
+    c.querySelector(".badge").textContent = { work: "...", done: "✓ IN", fail: "✗" }[ev.state];
+  } else if (ev.kind === "loose" && !state.busy) {
+    say(`Psst! I spotted ${ev.count} mod${ev.count > 1 ? "s" : ""} lying in your Downloads (${ev.names.join(", ")}). Move them into Mods?`,
+        ["Yes, tidy up!", "Not now"]).then((k) => (k === 0 ? tidy() : hush()));
+  }
+} };
+
+async function start() {
+  const h = await api().hello();
+  state.categories = h.categories;
+  $("#cat").innerHTML = h.categories.map((c) => `<option value="${c}">${c.toUpperCase()}</option>`).join("");
+  $("#model").innerHTML = h.models.map((m) => `<option>${esc(m)}</option>`).join(""); $("#model").value = h.model;
+  setMods(h.mods);
+  setTimeout(() => { cv.classList.add("in"); menu(); }, 400);
+}
+window.pywebview?.api ? start() : addEventListener("pywebviewready", start);
+</script>
+</body>
+</html>

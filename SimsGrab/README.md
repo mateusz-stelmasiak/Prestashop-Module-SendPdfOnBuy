@@ -1,45 +1,53 @@
 # SimsGrab
 
-One line. Paste a Pinterest pin, or type a vibe and pick categories. The mods get downloaded and installed into your Sims 4 `Mods` folder. If it can't be done, it says **FAILED** and why.
+Say one word, like **goth**, pick a category, like **OUTFITS**, and get the top 50 mods in one click, installed straight into your Sims 4 `Mods` folder. Or paste a Pinterest pin to grab just that mod.
+
+**Plumbie**, a bubbly little 3D assistant, walks you through it with Pokémon-style dialog boxes. She also notices when you have loose mods in Downloads and offers to move them.
 
 ![SimsGrab](screenshot.png)
 
-## Use it
+## What you see
 
-- **Pin link** (`https://pin.it/...` or `pinterest.com/pin/...`): grabs that one mod.
-- **Words** (`cottagecore witchy`) plus category chips (HAIR, CLOTHES, ...): builds a mod pack. It searches the web for each category and grabs the best hit.
-- **AI**: pick any model from your local [Ollama](https://ollama.com). Free, open source, runs on your PC, nothing sent to a cloud AI. It names the pack, writes the searches, and reads each page's links to choose what to click, like a person would. Pick **no AI** to use the built-in rules only.
-- **MODS**: click the path to change it. Defaults to `Documents\Electronic Arts\The Sims 4\Mods`.
+- **The one line:** a word or a pin link, a category, and **GO**.
+- **Result grid:** up to 50 pages with preview images. Click cards to pick or unpick, then **DOWNLOAD PACK**. Each card shows `...` while working, `✓ IN` when installed, `✗` when it failed.
+- **Agent browser:** the page an agent is reading right now and the link it clicks (green bar with the cursor). The log underneath lists every step.
+- **Plumbie:** click her any time for the menu. Use the arrow keys and Enter, or the mouse.
+- **AI:** pick any model from your local [Ollama](https://ollama.com). It's free, open source and runs on your PC. It writes the searches and reads each page's links to choose what to click. Pick **no AI** to use the built-in rules only.
+- **MODS:** click the path to change it. Defaults to `Documents\Electronic Arts\The Sims 4\Mods`.
 
-Mods are installed to `Mods\SimsGrab\<mod or pack name>\`. `.ts4script` files go one level up, where the game can load them. The original zips are kept in `Downloads\SimsGrab`.
+Mods are installed to `Mods\SimsGrab\<pack or mod name>\`. `.ts4script` files go one level up, where the game can load them. Each pack is also zipped to `Downloads\SimsGrab\<pack>.zip`.
 
 ## How it works
 
-1. **Pinterest agent** reads the pin and finds the page it was saved from.
-2. **Site agents** follow the trail: Tumblr, SimFileShare, MediaFire, Google Drive, Dropbox, Patreon (public posts), ModTheSims, and direct `.zip` / `.rar` / `.7z` / `.package` / `.ts4script` links. Redirect wrappers like `t.umblr.com` are stripped.
-3. With a model picked, it also gets each page's link texts and chooses up to 3 to follow.
-4. The first real mod file (checked by its file signature, not its name) is saved and installed.
+1. **Search:** DuckDuckGo (Bing as fallback) is searched with ~9 query variations until there are 50 unique pages. Pinterest boards, YouTube, Reddit and social sites are skipped.
+2. **Pinterest agent:** reads a pin and finds the page it was saved from.
+3. **Site agents** follow the trail: Tumblr, SimFileShare, MediaFire, Google Drive, Dropbox, Patreon (public posts), ModTheSims, and direct `.zip` / `.rar` / `.7z` / `.package` / `.ts4script` links. Four run at once.
+4. The first real mod file on each trail (checked by its file signature, not its name) is saved and installed.
+5. **Downloads watcher:** every 20 s it looks for `.package`, `.ts4script` and zips containing them in `Downloads`. **Tidy** moves them into Mods; zips are unpacked and then kept in `Downloads\SimsGrab`.
 
-Up to 30 pages are checked, at most 3 links deep. Sites behind logins, captchas or ad gates (The Sims Resource, CurseForge, paid Patreon posts) will fail. `.rar` / `.7z` downloads are saved but have to be unpacked by hand.
+Sites behind logins, captchas or ad gates (The Sims Resource, CurseForge, paid Patreon posts) fail, and so do list articles where the mods sit on other pages. `.rar` / `.7z` downloads are saved but have to be unpacked by hand.
 
 ## Get it
 
-**Windows:** download `SimsGrab.exe` from the latest release. No install needed. For AI, install Ollama and pull a model, for example `ollama pull llama3.2`.
+**Windows:** download `SimsGrab.exe` from the latest release, or from the newest *SimsGrab exe* run under Actions. It uses Edge WebView2, which comes with Windows 10 and 11. For AI, install Ollama and pull a model, for example `ollama pull llama3.2`.
 
-**Any OS with Python 3.8+:**
+**From source (Python 3.9+):**
 
 ```
+pip install pywebview
 python simsgrab.py                      # window
-python simsgrab.py https://pin.it/xxxx  # command line
+python simsgrab.py https://pin.it/xxxx  # command line, no window
 ```
 
 ## Build the exe yourself
 
 ```
-pip install pyinstaller
-pyinstaller --onefile --windowed --name SimsGrab --add-data "PressStart2P.ttf;." simsgrab.py
+pip install pyinstaller pywebview
+pyinstaller --onefile --windowed --name SimsGrab --add-data "web;web" simsgrab.py
 ```
 
-Pushing a tag named `simsgrab-v*` (for example `simsgrab-v1.0`) builds the exe and attaches it to a GitHub release.
+Pushing a tag named `simsgrab-v*` builds the exe and attaches it to a GitHub release.
 
-Pixel font: [Press Start 2P](https://fonts.google.com/specimen/Press+Start+2P) by CodeMan38, SIL Open Font License (`PressStart2P-OFL.txt`).
+## Credits
+
+[three.js](https://threejs.org) (MIT). Pixel fonts [Press Start 2P](https://fonts.google.com/specimen/Press+Start+2P) and [VT323](https://fonts.google.com/specimen/VT323), SIL Open Font License (see `web/`).
