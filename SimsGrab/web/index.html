@@ -351,10 +351,12 @@ async function tidy() {
 /* ---------- This or That: learn the player's taste from pairs, then pick by the average ---------- */
 const AXES = [["DARK", "LIGHT"], ["MUTED", "COLORFUL"], ["COOL", "WARM"], ["SOFT", "CONTRASTY"], ["SIMPLE", "DETAILED"], ["MAXIS MATCH", "ALPHA"]];
 const LINES = ["Ooh, tough one!", "Hmm hmm...", "Choose wisely ✦", "Cute pick!", "Next round!", "I'm learning you~"];
-const game = { on: false, pool: [], picks: [], seen: new Set(), round: 0, max: 10, axis: -1, pair: [], grown: 0 };
+const game = { on: false, pool: [], picks: [], passes: [], seen: new Set(), round: 0, max: 10, axis: -1, pair: [], grown: 0 };
 const loadImg = (src) => new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = src; });
 const each = (list, fn, n) => { const q = [...list]; return Promise.all(Array.from({ length: n }, async () => { while (q.length) await fn(q.shift()); })); };
 const taste = () => AXES.map((_, k) => (game.picks.length ? game.picks.reduce((a, c) => a + c.f[k], 0) / game.picks.length : 0.5));
+const useAI = () => $("#model").value !== "no AI";
+const brief = (c) => ({ title: c.title, site: c.site, q: c.f });  // what the chosen model gets to see of a mod
 const dist = (a, b, skip = -1) => Math.sqrt(a.reduce((s, v, k) => (k === skip ? s : s + (v - b[k]) ** 2), 0));
 
 async function look(card) {  // raw qualities of one mod: five from its picture, one from its title
@@ -388,7 +390,7 @@ function spread() {  // every quality becomes a 0..1 rank inside the pool, so "d
 async function play(start) {
   if (state.busy || !start) return;
   busy(true); clearLog(); $("#word").value = start;
-  Object.assign(game, { on: false, pool: [], picks: [], seen: new Set(), round: 0, axis: -1, pair: [], grown: 0 });
+  Object.assign(game, { on: false, pool: [], picks: [], passes: [], seen: new Set(), round: 0, axis: -1, pair: [], grown: 0 });
   say("This or That! Gathering mods to show you...", [], false, false);
   try {
     const pin = /pinterest\.|pin\.it\//.test(start), cat = $("#cat").value;
@@ -403,15 +405,23 @@ async function play(start) {
     game.on = true; $("#vs").classList.add("on"); next();
   } catch (e) { busy(false); say(`Aww: ${e.message || e}`); }
 }
-function next() {
+async function next() {
   const left = game.pool.filter((c) => c.f && !game.seen.has(c.url));
   if (game.round >= game.max || left.length < 2) return finish();
   const m = taste(), range = (k) => Math.max(...left.map((c) => c.f[k])) - Math.min(...left.map((c) => c.f[k]));
   const axes = AXES.map((_, k) => k).filter((k) => range(k) > 0.2);
   const axis = (game.axis = axes.length ? axes[game.round % axes.length] : 0);
-  const a = left.reduce((b, c) => (dist(c.f, m) < dist(b.f, m) ? c : b));         // closest to your taste so far
+  let a = left.reduce((b, c) => (dist(c.f, m) < dist(b.f, m) ? c : b));           // closest to your taste so far
   const score = (c) => Math.abs(c.f[axis] - a.f[axis]) - 0.5 * dist(c.f, m, axis); // same vibe, opposite on one quality
-  const b = left.filter((c) => c !== a).reduce((x, c) => (score(c) > score(x) ? c : x));
+  let b = left.filter((c) => c !== a).reduce((x, c) => (score(c) > score(x) ? c : x)), why = "";
+  if (useAI()) {  // the chosen model picks the pair from a shortlist: nearest to the taste + most telling
+    $("#round").textContent = "PLUMBIE IS THINKING..."; say("Hmm, let me think what to show you...", [], false, false);
+    const byScore = [...left].sort((x, y) => score(y) - score(x)), near = [...left].sort((x, y) => dist(x.f, m) - dist(y.f, m));
+    const cands = [...new Set([...near.slice(0, 8), ...byScore.slice(0, 6)])];
+    const r = await api().next_pair(game.picks.map(brief), game.passes.map(brief), cands.map(brief)).catch(() => null);
+    if (!game.on) return;
+    if (r) [a, b, why] = [cands[r.a], cands[r.b], r.why];
+  }
   game.pair = Math.random() < 0.5 ? [a, b] : [b, a];
   game.pair.forEach((c, k) => {
     const el = $(k ? "#pb" : "#pa"); el.className = "pickc";
@@ -419,13 +429,13 @@ function next() {
       <div class="t">${esc(c.title)}</div><div class="s">${esc(c.site)}</div><div class="key">${k ? "THAT →" : "← THIS"}</div>`;
   });
   $("#round").textContent = `ROUND ${game.round + 1} / ${game.max}`; meter();
-  say(game.round ? `${LINES[game.round % LINES.length]} This round: ${AXES[axis][0]} or ${AXES[axis][1]}?`
-                 : "Which one do you like more? Tap it, or use ← →!", [], false, false);
+  say(why || (game.round ? `${LINES[game.round % LINES.length]} This round: ${AXES[axis][0]} or ${AXES[axis][1]}?`
+                          : "Which one do you like more? Tap it, or use ← →!"), [], false, false);
 }
 function choose(k) {
   if (!game.on || !game.pair.length) return;
   const [win, lose] = k ? [game.pair[1], game.pair[0]] : game.pair;
-  game.pair = []; game.picks.push(win); game.seen.add(win.url).add(lose.url); game.round++;
+  game.pair = []; game.picks.push(win); game.passes.push(lose); game.seen.add(win.url).add(lose.url); game.round++;
   $(k ? "#pb" : "#pa").classList.add("win"); $(k ? "#pa" : "#pb").classList.add("lose"); cheer = 0.3; meter();
   if (win.pin && game.grown < 4) grow(win.pin);
   setTimeout(next, 450);
@@ -446,12 +456,24 @@ async function finish() {
   game.on = false; $("#vs").classList.remove("on");
   const m = taste(), ranked = game.pool.filter((c) => c.f).sort((a, b) => dist(a.f, m) - dist(b.f, m));
   ranked.forEach((c) => (c.match = Math.round(100 * (1 - dist(c.f, m) / Math.sqrt(AXES.length)))));
-  state.results = [...ranked, ...game.pool.filter((c) => !c.f)];
-  state.picked = new Set([...state.results.keys()].slice(0, 20));
+  let order = ranked, n = Math.min(20, ranked.length);
+  let words = AXES.map(([lo, hi], k) => (m[k] < 0.38 ? lo : m[k] > 0.62 ? hi : "")).filter(Boolean).join(", ");
+  if (useAI() && ranked.length) {  // the chosen model makes the final pick from the 40 best by the math
+    busy(true); say("Let me think really hard about your taste...", [], false, false);
+    const cands = ranked.slice(0, 40);
+    const r = await api().final_pick(game.picks.map(brief), game.passes.map(brief), cands.map(brief), n).catch(() => null);
+    busy(false);
+    if (r) {
+      const chosen = r.order.map((i) => cands[i]);
+      chosen.forEach((c) => (c.ai = true));
+      order = [...chosen, ...ranked.filter((c) => !chosen.includes(c))]; n = chosen.length; words = r.taste || words;
+    }
+  }
+  state.results = [...order, ...game.pool.filter((c) => !c.f)];
+  state.picked = new Set([...state.results.keys()].slice(0, n));
   game.picks.forEach((c) => state.picked.add(state.results.indexOf(c)));
   render(); cheer = 1;
-  const words = AXES.map(([lo, hi], k) => (m[k] < 0.38 ? lo : m[k] > 0.62 ? hi : "")).filter(Boolean);
-  const k = await say(`Your taste: ${words.join(", ") || "a little bit of everything"}! I picked your top ${state.picked.size}, best matches first.`,
+  const k = await say(`Your taste: ${words || "a little bit of everything"}! I picked your top ${state.picked.size}, best matches first.`,
                       [`Download my ${state.picked.size}`, "Let me pick", "Play again"]);
   if (k === 0) return download();
   if (k === 1) return say("Click cards to pick or unpick, then hit DOWNLOAD PACK!");
@@ -471,7 +493,7 @@ function render() {
   $("#grid").innerHTML = state.results.map((r, i) => `
     <div class="card ${state.picked.has(i) ? "on" : ""}" data-i="${i}" style="animation-delay:${i * 25}ms" title="${esc(r.url)}">
       <div class="img ${r.image ? "" : "none"}" ${r.image ? `style="background-image:url('${esc(r.image).replace(/'/g, "%27")}')"` : ""}>${r.image ? "" : "?"}</div>
-      ${r.match != null ? `<span class="me pct">${r.match}% MATCH</span>` : r.this ? '<span class="me">THIS PIN</span>' : ""}<div class="t">${esc(r.title)}</div><div class="s">${esc(r.site)}</div><span class="badge">${state.picked.has(i) ? "✓" : ""}</span></div>`).join("");
+      ${r.match != null ? `<span class="me pct">${r.ai ? "★ " : ""}${r.match}% MATCH</span>` : r.this ? '<span class="me">THIS PIN</span>' : ""}<div class="t">${esc(r.title)}</div><div class="s">${esc(r.site)}</div><span class="badge">${state.picked.has(i) ? "✓" : ""}</span></div>`).join("");
   updateCount();
 }
 function updateCount() {

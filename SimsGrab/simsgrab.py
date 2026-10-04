@@ -29,6 +29,8 @@ EXTS = (*KINDS.values(), ".ts4script")
 HOSTS = ("simfileshare.net/download", "mediafire.com/file", "mediafire.com/?", "drive.google.com", "dropbox.com/s",
          "patreon.com/posts", "patreon.com/file", "patreon.com/media-u", "getfile.php", "curseforge.com/sims4/")
 JUNK = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".css", ".js", ".ico", ".mp4")
+QUALITIES = (("dark", "light"), ("muted", "colorful"), ("cool", "warm"), ("soft", "contrasty"), ("simple", "detailed"),
+             ("maxis match", "alpha"))  # same order as AXES in web/index.html
 CATEGORIES = ("outfits", "hair", "makeup", "shoes", "accessories", "furniture", "build", "gameplay", "poses")
 SKIP = ("duckduckgo.", "bing.", "microsoft.", "pinterest.", "youtube.", "facebook.", "instagram.", "reddit.",
         "tiktok.", "twitter.", "x.com", "wikipedia.")
@@ -299,6 +301,20 @@ def search(word, cat, model="", log=lambda agent, msg: None, see=lambda *a: None
             for (u, t), img in zip(items, images)]
 
 
+def describe(q):
+    """A mod's measured qualities (0..1 each) in words, e.g. 'dark, muted, detailed'."""
+    return ", ".join(lo if v < 0.33 else hi for (lo, hi), v in zip(QUALITIES, q) if not 0.33 <= v <= 0.67) or "middle of the road"
+
+
+def taste_prompt(picks, passes, cands):
+    """What the model needs to judge a This or That player: their picks, their passes and the candidates."""
+    line = lambda mark, c: f"{mark} {c['title']} | {c['site']} | {describe(c['q'])}"
+    return ("You are helping a Sims 4 player find custom content they love by playing This or That.\n"
+            "They picked:\n" + ("\n".join(line("-", c) for c in picks) or "- nothing yet") + "\n"
+            "They passed on:\n" + ("\n".join(line("-", c) for c in passes) or "- nothing yet") + "\n"
+            "Candidates:\n" + "\n".join(line(f"{i}.", c) for i, c in enumerate(cands)) + "\n")
+
+
 def pins_in(data, found):
     """Collect every pin with an outside link anywhere in a Pinterest JSON reply, as result cards."""
     if isinstance(data, dict):
@@ -456,6 +472,44 @@ class Api:
     def similar(self, url):
         name, cards = similar(url, self._cfg["model"], self._log, self._see)
         return {"name": name, "results": cards}
+
+    def next_pair(self, picks, passes, cands):
+        """The chosen model picks the next This or That pair. None without a model or if it answers nonsense."""
+        if not self._cfg["model"]:
+            return None
+        try:
+            ans = ask(self._cfg["model"], taste_prompt(picks, passes, cands) +
+                      "Choose the next two candidates to show: one they will probably love, and one that is close but "
+                      "different in a way that tests something about their taste you are unsure of.\n"
+                      'Answer JSON {"a": number, "b": number, "why": "a playful sentence to the player, under 15 words"}')
+            a, b = int(ans["a"]), int(ans["b"])
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+            self._log("ai", f"x {e}")
+            return None
+        if a == b or not (0 <= a < len(cands) and 0 <= b < len(cands)):
+            return None
+        self._log("ai", f"shows {cands[a]['title']} vs {cands[b]['title']}")
+        return {"a": a, "b": b, "why": str(ans.get("why") or "")[:120]}
+
+    def final_pick(self, picks, passes, cands, n):
+        """The chosen model picks the n candidates that fit the player's taste best, in order."""
+        if not self._cfg["model"]:
+            return None
+        try:
+            ans = ask(self._cfg["model"], taste_prompt(picks, passes, cands) +
+                      f"Choose the {n} candidates that fit their taste best, best first.\n"
+                      'Answer JSON {"pick": [candidate numbers], "taste": "their taste in 3 to 6 words"}')
+            order = []
+            for i in ans.get("pick", []):
+                if isinstance(i, int) and 0 <= i < len(cands) and i not in order:
+                    order.append(i)
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+            self._log("ai", f"x {e}")
+            return None
+        if not order:
+            return None
+        self._log("ai", f"picked {len(order[:n])} for your taste")
+        return {"order": order[:n], "taste": str(ans.get("taste") or "")[:80]}
 
     def related(self, pin):
         """More pins like one the player picked in This or That, without the web search top-up."""
