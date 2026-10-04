@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "SimsGrab",
+  "version": "1.0",
+  "description": "Scan any page or Pinterest pin for Sims 4 mod downloads and grab them in one click.",
+  "action": { "default_popup": "popup.html", "default_title": "SimsGrab: scan this page for mods" },
+  "permissions": ["activeTab", "scripting", "downloads"],
+  "host_permissions": ["<all_urls>"],
+  "icons": { "16": "icon16.png", "48": "icon48.png", "128": "icon128.png" }
+}

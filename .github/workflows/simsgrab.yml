@@ -20,12 +20,17 @@ jobs:
           python-version: "3.12"
       - run: pip install pyinstaller pywebview
       - run: pyinstaller --onefile --windowed --name SimsGrab --add-data "SimsGrab/web;web" SimsGrab/simsgrab.py
+      - run: Compress-Archive -Path SimsGrab/chrome/* -DestinationPath dist/SimsGrab-chrome.zip
       - uses: actions/upload-artifact@v4
         with:
           name: SimsGrab
-          path: dist/SimsGrab.exe
+          path: |
+            dist/SimsGrab.exe
+            dist/SimsGrab-chrome.zip
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'simsgrab-latest' }}
           name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'SimsGrab (latest build)' }}
-          files: dist/SimsGrab.exe
+          files: |
+            dist/SimsGrab.exe
+            dist/SimsGrab-chrome.zip

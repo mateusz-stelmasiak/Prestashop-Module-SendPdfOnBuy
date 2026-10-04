@@ -24,6 +24,24 @@ Say one word, like **goth**, pick a category, like **OUTFITS**, and get the top 
 
 Mods are installed to `Mods\SimsGrab\<pack or mod name>\`. `.ts4script` files go one level up, where the game can load them. Each pack is also zipped to `Downloads\SimsGrab\<pack>.zip`.
 
+## Chrome extension
+
+The quick way to grab mods while you browse, with no clicking around. Open a CC post, a download page or a Pinterest pin, then click the plumbob in the toolbar. It scans the page right away and lists every mod link:
+
+- Direct `.zip` / `.package` / `.ts4script` / `.rar` / `.7z` files.
+- SimFileShare, MediaFire, Google Drive, Dropbox, Patreon attachments, ModTheSims and CurseForge links.
+- Hidden ones too, like links behind Tumblr's redirect or MediaFire's button.
+
+**GET** grabs one link and **GRAB ALL** grabs every file and file-host link. Host pages are followed to the real file, up to two pages deep. If there's no direct file (a login or ad-wait page), the page opens in a tab instead.
+
+On a **Pinterest pin** it jumps to the pin's source page and scans that.
+
+It runs in your own Chrome, so your logins work: Patreon posts you have access to, Tumblr, and sites that block bots. Files go to `Downloads`. If the SimsGrab app is running, Plumbie offers to move them into Mods.
+
+**Install:** unzip `SimsGrab-chrome.zip` from the latest release, open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick the unzipped folder. Then pin it with the puzzle icon.
+
+![Chrome extension](chrome-extension.png)
+
 ## How it works
 
 1. **Search:** DuckDuckGo (Bing as fallback) is searched with ~9 query variations until there are 50 unique pages. Pinterest boards, YouTube, Reddit and social sites are skipped.

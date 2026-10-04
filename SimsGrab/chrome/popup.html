@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SimsGrab</title>
+<style>
+@font-face { font-family: "Press Start 2P"; src: url("PressStart2P.ttf"); }
+@font-face { font-family: "VT323"; src: url("VT323.ttf"); }
+:root { --night: #12141c; --panel: #1d2030; --line: #2c3046; --ink: #ece8da; --muted: #7b8099; --green: #3ddc6f; --deep: #1a6b39; --red: #ff5a4e; --pink: #ff8fc7; }
+* { box-sizing: border-box; margin: 0; }
+body { width: 400px; max-height: 580px; display: flex; flex-direction: column; background: var(--night); color: var(--ink); font: 20px/1 "VT323", monospace; }
+button { font: 9px "Press Start 2P", monospace; border: 0; cursor: pointer; }
+header { display: flex; align-items: center; gap: 10px; padding: 14px 14px 10px; }
+header i { width: 12px; height: 18px; background: var(--green); clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); animation: bob 1.2s steps(2) infinite; }
+@keyframes bob { 50% { transform: translateY(-3px); } }
+header b { font: 13px "Press Start 2P", monospace; font-weight: normal; text-shadow: 2px 2px 0 var(--deep); }
+#where { flex: 1; min-width: 0; text-align: right; color: var(--muted); font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+ul { list-style: none; padding: 0 10px; overflow: auto; flex: 1; }
+li { display: grid; grid-template-columns: 74px 1fr auto; gap: 8px; align-items: center; padding: 7px 8px; margin-bottom: 6px; background: var(--panel); border-left: 4px solid var(--line); }
+li.s3 { border-color: var(--green); } li.s2 { border-color: var(--pink); } li.s1 { opacity: .6; }
+li em { font: 7px "Press Start 2P", monospace; font-style: normal; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+li.s3 em { color: var(--green); } li.s2 em { color: var(--pink); }
+li div { min-width: 0; }
+li b { display: block; font-weight: normal; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+li small { display: block; font-size: 15px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+li button { background: var(--green); color: var(--night); padding: 8px 9px; min-width: 52px; }
+li button:disabled { background: var(--line); color: var(--muted); cursor: default; }
+li.done button { background: var(--deep); color: var(--ink); } li.open button { background: var(--pink); }
+#empty { padding: 26px 18px; text-align: center; font: 10px/1.8 "Press Start 2P", monospace; color: var(--muted); }
+#empty span { font: 18px "VT323", monospace; }
+footer { display: flex; gap: 10px; align-items: center; padding: 10px 14px 14px; }
+#all { background: var(--green); color: var(--night); padding: 11px 12px; white-space: nowrap; }
+#all:disabled { background: var(--line); color: var(--muted); cursor: default; }
+#note { font-size: 15px; color: var(--muted); line-height: 1.05; }
+</style>
+</head>
+<body>
+<header><i></i><b>SIMSGRAB</b><span id="where">scanning...</span></header>
+<ul id="list"></ul>
+<p id="empty" hidden>NO MOD LINKS HERE<br><span>Open a CC post, a Pinterest pin or a download page and click me again.</span></p>
+<footer><button id="all" disabled>GRAB ALL</button><span id="note">Saves to Downloads. The SimsGrab app moves them into Mods.</span></footer>
+<script src="popup.js"></script>
+</body>
+</html>
