@@ -11,6 +11,7 @@
 
 /* on a pin in the feed: under Pinterest's own top row (board picker, Save), shown on hover until it has something to say */
 .sg-pin { top: 58px; left: 10px; max-width: calc(100% - 20px); }
+.sg-pin span { white-space: normal; }
 .sg-pin[data-state="idle"]:not(.sg-show) { opacity: 0; }
 
 /* on a pin's own page: a fixed button in the corner */
@@ -18,13 +19,25 @@
 .sg-dock i { width: 12px; height: 19px; }
 .sg-dock small { font-size: 8px; }
 
+/* the queue counter */
+.sg-queue { all: unset; position: fixed; z-index: 2147483000; left: 24px; bottom: 24px; display: grid; grid-template-columns: auto 1fr;
+            gap: 4px 8px; align-items: center; padding: 8px 12px; background: #12141c; color: #ece8da; border: 3px solid #ff8fc7;
+            box-shadow: 3px 3px 0 #0009; font: 8px/1.4 "SimsGrab Pixel", monospace; pointer-events: none; }
+.sg-queue.sg-up { bottom: 104px; }
+.sg-queue[hidden] { display: none; }
+.sg-queue i { width: 9px; height: 14px; background: #ff8fc7; clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
+.sg-queue span, .sg-queue small { all: unset; white-space: nowrap; }
+.sg-queue small { grid-column: 2; font-size: 7px; color: #3ddc6f; }
+.sg-queue small:empty { display: none; }
+
 .sg-badge:hover { background: #1d2030; }
-.sg-badge[data-state="scan"], .sg-badge[data-state="files"] { border-color: #ff8fc7; cursor: progress; }
+.sg-badge[data-state="scan"], .sg-badge[data-state="files"], .sg-badge[data-state="queued"] { border-color: #ff8fc7; }
 .sg-badge[data-state="scan"] i, .sg-badge[data-state="files"] i { animation: sg-bob .6s steps(2) infinite; }
+.sg-badge[data-state="queued"] i { background: #ff8fc7; }
 .sg-badge[data-state="ready"] { background: #3ddc6f; color: #12141c; border-color: #12141c; animation: sg-glow 1s steps(2) infinite; }
 .sg-badge[data-state="ready"] i { background: #12141c; }
 .sg-badge[data-state="ready"]:hover { background: #ece8da; }
-.sg-badge[data-state="none"] { border-color: #7b8099; color: #a9adbf; cursor: default; }
+.sg-badge[data-state="none"] { border-color: #7b8099; color: #a9adbf; }
 .sg-badge[data-state="none"] i { background: #7b8099; }
 @keyframes sg-bob { 50% { transform: translateY(-2px); } }
 @keyframes sg-glow { 50% { box-shadow: 3px 3px 0 #0009, 0 0 0 3px #3ddc6f66; } }

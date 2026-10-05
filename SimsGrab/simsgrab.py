@@ -5,9 +5,10 @@ Agents follow the trail from a pin (or a web search) through the usual CC hosts
 real mod file turns up. An optional local model (Ollama) writes the searches and
 picks which link to click. The window is web/index.html shown by pywebview.
 """
-import base64, heapq, html, itertools, json, os, re, shutil, sys, threading, time, webbrowser, zipfile
+import base64, heapq, html, io, itertools, json, os, re, shutil, sys, threading, time, webbrowser, zipfile
 from concurrent.futures import ThreadPoolExecutor
 from http.cookiejar import CookieJar
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urljoin, urlparse
 from urllib.request import HTTPCookieProcessor, ProxyHandler, Request, build_opener
@@ -24,6 +25,7 @@ RELATED = "https://www.pinterest.com/resource/RelatedModulesResource/get/?data="
 SEARCH = "https://html.duckduckgo.com/html/?q="
 BING = "https://www.bing.com/search?q="
 OLLAMA = "http://localhost:11434"
+DOOR = 47323  # local port where the Chrome extension hands over zips for the Mods folder
 KINDS = {b"PK\x03\x04": ".zip", b"Rar!": ".rar", b"7z\xbc\xaf": ".7z", b"DBPF": ".package"}  # magic bytes
 EXTS = (*KINDS.values(), ".ts4script")
 HOSTS = ("simfileshare.net/download", "mediafire.com/file", "mediafire.com/?", "drive.google.com", "dropbox.com/s",
@@ -68,10 +70,26 @@ def ask(model, prompt):
     return json.loads(json.load(r)["response"])
 
 
-def fetch(url):
-    """GET url -> (response, first 4 bytes). The magic bytes tell mod files apart from pages."""
-    r = web.open(Request(url, headers={"User-Agent": UA}), timeout=30)
-    return r, r.read(4)
+def fetch(url, tries=3):
+    """GET url -> (response, first 4 bytes). The magic bytes tell mod files apart from pages.
+    Patient: network errors, rate limits and server hiccups are retried before giving up."""
+    for i in range(1, tries + 1):
+        try:
+            r = web.open(Request(url, headers={"User-Agent": UA}), timeout=30)
+            return r, r.read(4)
+        except OSError as e:
+            if i == tries or getattr(e, "code", 500) not in (429, 500, 502, 503, 504):
+                raise
+            time.sleep(2 * i)
+
+
+def wait_hint(base, text):
+    """'Your download starts in 10 seconds' pages: (seconds to wait, where to go after) or None."""
+    m = re.search(r"""<meta[^>]+http-equiv=["']?refresh["']?[^>]*content=["']?\s*(\d+)\s*;\s*url=([^"'>]+)""", text, re.I)
+    if m:
+        return int(m[1]), urljoin(base, m[2].strip())
+    m = re.search(r"(?:download|start|begin|ready)[^<]{0,40}?\bin\s+(\d{1,2})\s*(?:s\b|sec)", text, re.I)
+    return (int(m[1]), base) if m else None
 
 
 def agent(url):
@@ -194,17 +212,26 @@ def save(data, name):
 
 
 def install(path, mods, folder):
-    """Unpack a grabbed zip into Mods/SimsGrab. Packages may sit deep, scripts only one folder down."""
-    n = 0
-    with zipfile.ZipFile(path) as z:
+    """Unpack a grabbed zip into Mods/SimsGrab, zips inside zips too. Packages may sit deep, scripts only one folder down."""
+    def unpack(z):
+        n = 0
         for f in z.namelist():
             ext = Path(f).suffix.lower()
-            if ext in (".package", ".ts4script"):
+            if ext == ".zip":
+                try:
+                    with zipfile.ZipFile(io.BytesIO(z.read(f))) as inner:
+                        n += unpack(inner)
+                except zipfile.BadZipFile:
+                    pass
+            elif ext in (".package", ".ts4script"):
                 out = Path(mods) / "SimsGrab" / (clean(folder) if ext == ".package" else "") / Path(f).name
                 out.parent.mkdir(parents=True, exist_ok=True)
                 out.write_bytes(z.read(f))
                 n += 1
-    return n
+        return n
+
+    with zipfile.ZipFile(path) as z:
+        return unpack(z)
 
 
 def grab(url, log=lambda agent, msg: None, model="", goal="a Sims 4 mod", pages=MAX_PAGES, see=lambda *a: None):
@@ -214,7 +241,7 @@ def grab(url, log=lambda agent, msg: None, model="", goal="a Sims 4 mod", pages=
     if re.search(r"pinterest\.|pin\.it/", url):
         url = pin_source(url, log)
     tick = itertools.count()
-    todo, seen = [(0, 0, 0, url)], set()
+    todo, seen, waited = [(0, 0, 0, url)], set(), set()
     while todo and len(seen) < pages:
         _, depth, _, u = heapq.heappop(todo)
         if u in seen:
@@ -229,6 +256,13 @@ def grab(url, log=lambda agent, msg: None, model="", goal="a Sims 4 mod", pages=
             text = (head + r.read(5_000_000)).decode("utf-8", "replace")
         except OSError as e:
             log(agent(u), f"x {e}")
+            continue
+        if u not in waited and not leads(r.geturl(), text) and (hint := wait_hint(r.geturl(), text)):
+            waited.add(u)  # a countdown page: wait it out like a person would, then look again
+            log(agent(u), f"waiting {min(hint[0], 30)}s for the download")
+            time.sleep(min(hint[0], 30) + 0.5)
+            seen.discard(hint[1])
+            heapq.heappush(todo, (-3, depth, next(tick), hint[1]))
             continue
         if depth < MAX_DEPTH:
             links = anchors(r.geturl(), text)
@@ -559,11 +593,52 @@ class Api:
         return tidy(self._cfg["mods"])
 
 
+def door(api):
+    """A local door for the Chrome extension: it POSTs a finished zip and we unpack it straight into Mods.
+    Only the extension gets in: web pages can't send a chrome-extension Origin, and the custom header stops them anyway."""
+    class Door(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            if not self.headers.get("Origin", "").startswith("chrome-extension://") or self.headers.get("X-SimsGrab") != "1":
+                return self.send_error(403)
+            name = clean(parse_qs(urlparse(self.path).query).get("name", [""])[0]) or "Pinterest"
+            OUT.mkdir(parents=True, exist_ok=True)
+            path, i = OUT / f"{name}.zip", 1
+            while path.exists():
+                i += 1
+                path = OUT / f"{name} ({i}).zip"
+            path.write_bytes(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+            try:
+                n = install(path, api._cfg["mods"], name)
+            except zipfile.BadZipFile:
+                return self.send_error(400)
+            try:
+                api._log("chrome", f"{name}: {n} files -> Mods")
+                api._emit("chrome", name=name, files=n)
+            except Exception:  # the window may not be up yet; the files are in Mods anyway
+                pass
+            body = json.dumps({"files": n, "folder": str(Path(api._cfg["mods"]) / "SimsGrab" / name)}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+
+    try:
+        srv = ThreadingHTTPServer(("127.0.0.1", DOOR), Door)
+    except OSError:  # another SimsGrab already has the door open
+        return None
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
 def app():
     global webview
     import webview
 
     api = Api()
+    door(api)
     api._win = webview.create_window("SimsGrab", str(HERE / "web" / "index.html"), js_api=api, width=1240, height=800,
                                      min_size=(960, 640), background_color="#12141C")
     webview.start(http_server=True)

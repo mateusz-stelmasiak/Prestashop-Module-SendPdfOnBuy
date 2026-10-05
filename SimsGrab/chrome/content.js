@@ -1,5 +1,6 @@
 // SimsGrab on Pinterest: a GRAB MODS button on every pin (shown on hover, like Save) and one on the pin page.
-// Resting on a pin or clicking the button scans its source in the background; then GET ZIP gives one zip of all mod files.
+// Resting on a pin queues a scan of its source; clicking the button queues it first and it saves itself when done
+// (into Mods through the SimsGrab app, or Downloads). GET ZIP saves a finished one.
 const PIN = /\/pin\/(?:[^/]*--)?(\d+)/;
 const known = new Map();  // pin -> its last progress, so every button for that pin shows the same thing
 let timer, shown;
@@ -23,7 +24,9 @@ function button(pin, kind) {
 function paint(b, p = { state: "idle", text: "GRAB MODS" }) {
   b.dataset.state = p.state;
   b.querySelector("span").textContent = b.classList.contains("sg-dock") && p.state === "idle" ? "SIMSGRAB · GRAB MODS" : p.text;
-  b.querySelector("small").textContent = p.state === "files" ? `${p.count} FOUND` : p.state === "none" && p.src ? "OPEN SOURCE ↗" : "";
+  const busy = !["ready", "none", "idle"].includes(p.state);
+  b.querySelector("small").textContent = p.state === "none" && p.src ? "OPEN SOURCE ↗"
+    : [p.state === "files" && `${p.count} FOUND`, busy && p.want && "AUTO-SAVE ON", p.note].filter(Boolean).join(" · ");
 }
 
 const update = (pin) => document.querySelectorAll(`.sg-badge[data-pin="${pin}"]`).forEach((b) => paint(b, known.get(pin)));
@@ -34,18 +37,34 @@ function sourceShown(pin) {  // the source link Pinterest prints on the pin card
   return [...host.querySelectorAll('a[href^="http"]')].map((a) => a.href).find(offSite) || null;
 }
 
-function scan(pin) {
+function scan(pin, want = false) {
   if (known.has(pin)) return;
-  known.set(pin, { state: "scan", text: "SCANNING..." });
+  known.set(pin, { state: "queued", text: "QUEUED", want });
   update(pin);
-  chrome.runtime.sendMessage({ type: "hunt", pin, src: sourceShown(pin) });
+  chrome.runtime.sendMessage({ type: "hunt", pin, src: sourceShown(pin), want });
 }
 
 function press(pin) {
   const p = known.get(pin);
-  if (!p) scan(pin);
+  if (!p) scan(pin, true);  // clicked: first in line, and it saves itself when done
   else if (p.state === "ready") chrome.runtime.sendMessage({ type: "zip", pin });
-  else if (p.state === "none" && p.src) chrome.runtime.sendMessage({ type: "open", url: p.src });
+  else if (p.state === "none") p.src && chrome.runtime.sendMessage({ type: "open", url: p.src });
+  else chrome.runtime.sendMessage({ type: "want", pin });  // still busy: save it when done
+}
+
+function queueBar(q) {  // the little counter: what's working, waiting and going to save itself
+  let bar = document.querySelector(".sg-queue");
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.className = "sg-queue";
+    bar.innerHTML = "<i></i><span></span><small></small>";
+    document.body.append(bar);
+  }
+  bar.hidden = !(q.working || q.waiting || q.saved);
+  bar.classList.toggle("sg-up", !!document.querySelector(".sg-dock"));
+  bar.querySelector("span").textContent = q.working || q.waiting
+    ? [`QUEUE: ${q.working} WORKING`, q.waiting && `${q.waiting} WAITING`, q.auto && `${q.auto} AUTO-SAVE`].filter(Boolean).join(" · ") : "QUEUE DONE";
+  bar.querySelector("small").textContent = q.saved ? `LAST: ${q.saved}` : "";
 }
 
 function sweep() {  // buttons for pins Pinterest loads while you scroll, and for the pin page you're on
@@ -70,6 +89,7 @@ addEventListener("mouseover", (e) => {  // resting on a pin starts its scan
 }, true);
 
 chrome.runtime.onMessage.addListener((m) => {
+  if (m.type === "queue") return queueBar(m);
   if (m.type !== "progress") return;
   known.set(m.pin, m);
   update(m.pin);

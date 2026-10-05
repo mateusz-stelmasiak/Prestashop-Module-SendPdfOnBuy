@@ -529,6 +529,9 @@ window.ui = { on(ev) {
     const c = $(`.card[data-i="${ev.i}"]`); if (!c) return;
     c.classList.remove("work", "done", "fail"); c.classList.add(ev.state);
     c.querySelector(".badge").textContent = { work: "...", done: "✓ IN", fail: "✗" }[ev.state];
+  } else if (ev.kind === "chrome") {  // the Chrome extension handed over a pack
+    cheer = 1;
+    if (!state.busy && !game.on) say(`Ding! ${ev.files} file${ev.files === 1 ? "" : "s"} from "${ev.name}" just landed in your Mods ✦`, [], false, false);
   } else if (ev.kind === "loose" && !state.busy) {
     say(`Psst! I spotted ${ev.count} mod${ev.count > 1 ? "s" : ""} lying in your Downloads (${ev.names.join(", ")}). Move them into Mods?`,
         ["Yes, tidy up!", "Not now"]).then((k) => (k === 0 ? tidy() : hush()));

@@ -26,13 +26,25 @@ Mods are installed to `Mods\SimsGrab\<pack or mod name>\`. `.ts4script` files go
 
 ## Chrome extension
 
-**Works right on Pinterest.** Every pin gets a pixel **◆ GRAB MODS** button. It shows when you hover the pin, just below Pinterest's own Save row. A pin's own page gets a big **SIMSGRAB** button in the bottom-left corner. Rest on a pin, or click its button, and it goes to work:
+**Works right on Pinterest.** Every pin gets a pixel **◆ GRAB MODS** button. It shows when you hover the pin, just below Pinterest's own Save row. A pin's own page gets a big **SIMSGRAB** button in the bottom-left corner.
+
+- **Click it and walk away.** The pin joins a queue and saves itself when it's done (**AUTO-SAVE ON**). Click as many pins as you like. Two are worked on at a time, and clicked pins go ahead of ones you only hovered. A counter in the corner shows what's working, waiting and auto-saving.
+- **Straight into Mods.** With the SimsGrab app open, finished packs go right into `Mods\SimsGrab\<pack name>\`, zips inside zips included, and Plumbie tells you. With the app closed, the zip lands in `Downloads` and the app offers to move it when you open it.
+
+What it does for each pin:
 
 1. **SCANNING**: it finds the page the pin was saved from, using the source link Pinterest shows on the pin if there is one. If that page is a list of CC posts (the "50+ goth CC finds" kind), it reads each post too.
 2. **GOING TO FILES 3/8 · 2 FOUND**: it follows every download link (SimFileShare, MediaFire, Drive, Dropbox, Patreon, ModTheSims, direct files, links behind Tumblr redirects) to the real file. Each file is checked by its file signature, so images, ads and login pages are left out.
-3. **GET ZIP · 5 FILES**: click it and you get one `.zip` with all of them, named after the source page, in `Downloads`.
+3. **It doesn't give up easily:**
+   - Network errors, rate limits and server hiccups are retried.
+   - "Your download starts in 10 seconds" pages are waited out.
+   - **AGENT WAITING ON …**: when a page only shows its file after JavaScript, a countdown or a button press, a browser agent opens it in a minimized window. It waits up to 40 seconds and presses **Download** like a person would, then catches the file. Its windows and pop-ups are closed afterwards.
+   - Anything it catches that isn't a mod is deleted.
+4. **IN MODS! · 5 FILES**, or **GET ZIP** if you only hovered: click it to save the zip.
 
-Pins you've scanned keep their button visible, so you can scroll back to them. If nothing can be fetched (logins, ad-wait pages, a pin with no link), the button says so. Click it to open the source page.
+If nothing can be fetched (logins, paid posts, a pin with no link), the button says so. Click it to open the source page.
+
+![Queue on Pinterest](chrome-queue.png)
 
 ![Hover a pin](chrome-hover.png)
 
@@ -47,8 +59,9 @@ It runs in your own Chrome, so your logins work: Patreon posts you have access t
 1. **Search:** DuckDuckGo (Bing as fallback) is searched with ~9 query variations until there are 50 unique pages. Pinterest boards, YouTube, Reddit and social sites are skipped.
 2. **Pinterest agent:** reads pins through Pinterest's public widget API (pin info, board pins) and its related-pins feed, and keeps the pins that link to an outside page.
 3. **Site agents** follow the trail: Tumblr, SimFileShare, MediaFire, Google Drive, Dropbox, Patreon (public posts), ModTheSims, and direct `.zip` / `.rar` / `.7z` / `.package` / `.ts4script` links. Four run at once.
-4. The first real mod file on each trail (checked by its file signature, not its name) is saved and installed.
-5. **Downloads watcher:** every 20 s it looks for `.package`, `.ts4script` and zips containing them in `Downloads`. **Tidy** moves them into Mods; zips are unpacked and then kept in `Downloads\SimsGrab`.
+4. The first real mod file on each trail (checked by its file signature, not its name) is saved and installed. Agents retry network errors, rate limits and server hiccups, and wait out "download starts in N seconds" pages.
+5. **Chrome door:** while the app is open, it listens on `127.0.0.1:47323` for packs from the Chrome extension and unpacks them into Mods. Only the extension gets in: web pages can't send a `chrome-extension://` origin or the custom header the door requires.
+6. **Downloads watcher:** every 20 s it looks for `.package`, `.ts4script` and zips containing them in `Downloads`. **Tidy** moves them into Mods; zips are unpacked and then kept in `Downloads\SimsGrab`.
 
 Sites behind logins, captchas or ad gates (The Sims Resource, CurseForge, paid Patreon posts) fail, and so do list articles where the mods sit on other pages. `.rar` / `.7z` downloads are saved but have to be unpacked by hand.
 

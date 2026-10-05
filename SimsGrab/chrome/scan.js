@@ -9,6 +9,7 @@ const PIN_API = "https://widgets.pinterest.com/v3/pidgets/pins/info/?pin_ids=", 
 const site = (u) => new URL(u).hostname.replace(/^www\./, "");
 const path = (u) => { const p = new URL(u).pathname; try { return decodeURIComponent(p); } catch { return p; } };
 const clean = (s) => s.replace(/&#?\w+;/g, " ").replace(/[\\/:*?"<>|~]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 60);
+const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
 const pool = (items, n, fn) => { const q = [...items]; return Promise.all(Array.from({ length: n }, async () => { while (q.length) await fn(q.shift()); })); };
 
 function unwrap(u) {  // t.umblr.com/redirect?z=<real url> and friends
@@ -53,7 +54,25 @@ function route(u) {  // share links -> direct downloads or data the host gives o
   return p ? `https://www.patreon.com/api/posts/${p[1]}?include=attachments,attachments_media` : u;
 }
 
-const get = (u) => fetch(route(u), { credentials: "include" });
+async function get(u, tries = 3) {  // a patient fetch: network errors, rate limits and server hiccups get retried
+  for (let i = 1; ; i++) {
+    try {
+      const r = await fetch(route(u), { credentials: "include" });
+      if (i < tries && (r.status === 429 || r.status >= 500)) throw new Error(`HTTP ${r.status}`);
+      return r;
+    } catch (e) {
+      if (i >= tries) throw e;
+      await sleep(2000 * i);
+    }
+  }
+}
+
+function waitHint(base, html) {  // "your download starts in 10 seconds" pages: how long to wait, and where to go after
+  const m = html.match(/<meta[^>]+http-equiv=["']?refresh["']?[^>]*content=["']?\s*(\d+)\s*;\s*url=([^"'>]+)/i);
+  if (m) return { secs: +m[1], url: new URL(m[2].trim(), base).href };
+  const c = html.match(/(?:download|start|begin|ready)[^<]{0,40}?\bin\s+(\d{1,2})\s*(?:s\b|sec)/i);
+  return c ? { secs: +c[1], url: null } : null;
+}
 
 async function page(url) {
   const r = await get(url);
@@ -69,13 +88,23 @@ async function resolve(url, depth = 0) {  // the address of the file behind a li
   return next ? resolve(next.url, depth + 1) : null;
 }
 
-async function getFile(url, depth = 0) {  // the mod file behind a link as {name, data}, two host pages deep; null if none
+async function getFile(url, depth = 0) {  // the mod file behind a link as {name, data}, a few host pages deep; null if none
   const r = await get(url);
   if (!r.ok) return null;
-  if (/html|json|text\/plain/.test(r.headers.get("content-type") || "")) {
-    const next = depth < 2 && leads(r.url, await r.text()).find((l) => l.score >= 2 && l.url !== url);
-    return next ? getFile(next.url, depth + 1) : null;
+  if (isPage(r)) {
+    const html = await r.text(), next = depth < 3 && leads(r.url, html).find((l) => l.score >= 2 && l.url !== url);
+    if (next) return getFile(next.url, depth + 1);
+    const wait = depth < 3 && waitHint(r.url, html);  // a countdown page: wait it out like a person would
+    if (!wait) return null;
+    await sleep(Math.min(wait.secs, 30) * 1000 + 500);
+    return getFile(wait.url || url, depth + 1);
   }
+  return asFile(r);
+}
+
+const isPage = (r) => /html|json|text\/plain/.test(r.headers.get("content-type") || "");
+
+async function asFile(r) {  // a fetched response as {name, data} if it really is a mod, else null
   const data = new Uint8Array(await r.arrayBuffer());
   const kind = MAGIC[[...data.slice(0, 4)].map((b) => b.toString(16).padStart(2, "0")).join("")];
   if (!kind) return null;  // not a mod: an image, an ad, an error page
@@ -97,7 +126,9 @@ async function pinSource(pin) {  // the page a pin was saved from
   return null;
 }
 
-async function hunt(pin, say, known) {  // pin -> its source page -> (the CC posts it lists) -> the mod files
+const noAgent = async () => null;
+
+async function hunt(pin, say, known, agent = noAgent) {  // pin -> its source page -> (the CC posts it lists) -> the mod files
   say({ state: "scan", text: "FINDING SOURCE" });
   const src = known || (await pinSource(pin));  // known: the source link Pinterest already shows on the pin
   if (!src) return { files: [], why: "PIN HAS NO LINK" };
@@ -118,16 +149,27 @@ async function hunt(pin, say, known) {  // pin -> its source page -> (the CC pos
     }
   }
   targets = [...new Set(targets)].slice(0, 40);
-  const files = [];
-  let done = 0;
+  const files = [], stuck = [], add = (f) => f && !files.some((x) => x.name === f.name && x.data.length === f.data.length) && files.push(f);
+  let done = 0, saved = 0;
   await pool(targets, 4, async (u) => {
-    try {
-      const f = await getFile(u);
-      if (f && !files.some((x) => x.name === f.name && x.data.length === f.data.length)) files.push(f);
-    } catch {}
+    const f = await getFile(u).catch(() => null);
+    f ? add(f) : stuck.push(u);
     say({ state: "files", text: `GOING TO FILES ${++done}/${targets.length}`, count: files.length });
   });
-  return { files, src, name: name || `Pin ${pin}`, why: files.length ? "" : targets.length ? "FILES ARE LOCKED" : "NO DOWNLOAD LINKS" };
+  // the patient pass: a browser agent opens what the quick look couldn't crack, waits out countdowns, presses
+  // Download and catches the file. With no links at all it reads the source page itself, scripts and all.
+  for (const u of (targets.length ? stuck : [src]).slice(0, 4)) {
+    say({ state: "files", text: `AGENT WAITING ON ${site(u).toUpperCase()}`, count: files.length });
+    const got = await agent(u).catch(() => null);
+    for (const f of got?.urls || []) add(await getFile(f).catch(() => null));
+    for (const d of got?.downloads || []) {  // a download the agent caught: fetch it ourselves for the zip
+      const r = await get(d.url).catch(() => null);
+      if (r?.ok && !isPage(r)) { add(await asFile(r)); got.drop?.(d.id); }  // in the zip now, or junk: either way not in Downloads
+      else saved++;  // couldn't fetch it again (one-time link): Chrome's own copy stays in Downloads
+    }
+  }
+  return { files, saved, src, name: name || `Pin ${pin}`,
+           why: files.length || saved ? "" : targets.length ? "FILES ARE LOCKED" : "NO DOWNLOAD LINKS" };
 }
 
 const CRC = Array.from({ length: 256 }, (_, n) => { for (let k = 0; k < 8; k++) n = n & 1 ? 0xedb88320 ^ (n >>> 1) : n >>> 1; return n >>> 0; });
