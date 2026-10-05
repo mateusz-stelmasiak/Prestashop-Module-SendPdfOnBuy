@@ -26,21 +26,21 @@ Mods are installed to `Mods\SimsGrab\<pack or mod name>\`. `.ts4script` files go
 
 ## Chrome extension
 
-The quick way to grab mods while you browse, with no clicking around. Open a CC post, a download page or a Pinterest pin, then click the plumbob in the toolbar. It scans the page right away and lists every mod link:
+**Hover a pin, get a zip.** On Pinterest, rest your mouse on any pin for a moment and a little badge pops up on it:
 
-- Direct `.zip` / `.package` / `.ts4script` / `.rar` / `.7z` files.
-- SimFileShare, MediaFire, Google Drive, Dropbox, Patreon attachments, ModTheSims and CurseForge links.
-- Hidden ones too, like links behind Tumblr's redirect or MediaFire's button.
+1. **SCANNING**: it finds the page the pin was saved from. If that page is a list of CC posts (the "50+ goth CC finds" kind), it reads each post too.
+2. **GOING TO FILES 3/8 · 2 FOUND**: it follows every download link (SimFileShare, MediaFire, Drive, Dropbox, Patreon, ModTheSims, direct files, links behind Tumblr redirects) to the real file. Each file is checked by its file signature, so images, ads and login pages are left out.
+3. **GET ZIP · 5 FILES**: click it and you get one `.zip` with all of them, named after the source page, in `Downloads`.
 
-**GET** grabs one link and **GRAB ALL** grabs every file and file-host link. Host pages are followed to the real file, up to two pages deep. If there's no direct file (a login or ad-wait page), the page opens in a tab instead.
+If nothing can be fetched (logins, ad-wait pages, a pin with no link), the badge says so. Click it to open the source page.
 
-On a **Pinterest pin** it jumps to the pin's source page and scans that.
+![Hover a pin](chrome-hover.png)
 
-It runs in your own Chrome, so your logins work: Patreon posts you have access to, Tumblr, and sites that block bots. Files go to `Downloads`. If the SimsGrab app is running, Plumbie offers to move them into Mods.
+On any other page, click the plumbob in the toolbar. It lists every mod link on the page with **GET** and **GRAB ALL** buttons.
+
+It runs in your own Chrome, so your logins work: Patreon posts you have access to, Tumblr, and sites that block bots. If the SimsGrab app is running, Plumbie offers to move new downloads into Mods.
 
 **Install:** unzip `SimsGrab-chrome.zip` from the latest release, open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick the unzipped folder. Then pin it with the puzzle icon.
-
-![Chrome extension](chrome-extension.png)
 
 ## How it works
 

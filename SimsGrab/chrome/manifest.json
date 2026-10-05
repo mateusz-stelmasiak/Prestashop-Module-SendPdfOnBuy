@@ -1,10 +1,19 @@
 {
   "manifest_version": 3,
   "name": "SimsGrab",
-  "version": "1.0",
-  "description": "Scan any page or Pinterest pin for Sims 4 mod downloads and grab them in one click.",
+  "version": "1.1",
+  "description": "Hover a Pinterest pin to scan it for Sims 4 mods and get them all in one zip. Or scan any page from the toolbar.",
   "action": { "default_popup": "popup.html", "default_title": "SimsGrab: scan this page for mods" },
-  "permissions": ["activeTab", "scripting", "downloads"],
+  "background": { "service_worker": "background.js" },
+  "permissions": ["activeTab", "scripting", "downloads", "offscreen"],
   "host_permissions": ["<all_urls>"],
+  "content_scripts": [{
+    "matches": ["*://*.pinterest.com/*", "*://*.pinterest.co.uk/*", "*://*.pinterest.ca/*", "*://*.pinterest.com.au/*",
+                "*://*.pinterest.de/*", "*://*.pinterest.fr/*", "*://*.pinterest.es/*", "*://*.pinterest.it/*",
+                "*://*.pinterest.pt/*", "*://*.pinterest.com.mx/*", "*://*.pinterest.jp/*", "*://*.pinterest.nz/*"],
+    "js": ["content.js"],
+    "css": ["content.css"]
+  }],
+  "web_accessible_resources": [{ "resources": ["PressStart2P.ttf"], "matches": ["<all_urls>"] }],
   "icons": { "16": "icon16.png", "48": "icon48.png", "128": "icon128.png" }
 }
