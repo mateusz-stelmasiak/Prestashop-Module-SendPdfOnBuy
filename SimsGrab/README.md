@@ -26,13 +26,13 @@ Mods are installed to `Mods\SimsGrab\<pack or mod name>\`. `.ts4script` files go
 
 ## Chrome extension
 
-**Hover a pin, get a zip.** On Pinterest, rest your mouse on any pin for a moment and a little badge pops up on it:
+**Works right on Pinterest.** Every pin gets a pixel **◆ GRAB MODS** button. It shows when you hover the pin, just below Pinterest's own Save row. A pin's own page gets a big **SIMSGRAB** button in the bottom-left corner. Rest on a pin, or click its button, and it goes to work:
 
-1. **SCANNING**: it finds the page the pin was saved from. If that page is a list of CC posts (the "50+ goth CC finds" kind), it reads each post too.
+1. **SCANNING**: it finds the page the pin was saved from, using the source link Pinterest shows on the pin if there is one. If that page is a list of CC posts (the "50+ goth CC finds" kind), it reads each post too.
 2. **GOING TO FILES 3/8 · 2 FOUND**: it follows every download link (SimFileShare, MediaFire, Drive, Dropbox, Patreon, ModTheSims, direct files, links behind Tumblr redirects) to the real file. Each file is checked by its file signature, so images, ads and login pages are left out.
 3. **GET ZIP · 5 FILES**: click it and you get one `.zip` with all of them, named after the source page, in `Downloads`.
 
-If nothing can be fetched (logins, ad-wait pages, a pin with no link), the badge says so. Click it to open the source page.
+Pins you've scanned keep their button visible, so you can scroll back to them. If nothing can be fetched (logins, ad-wait pages, a pin with no link), the button says so. Click it to open the source page.
 
 ![Hover a pin](chrome-hover.png)
 

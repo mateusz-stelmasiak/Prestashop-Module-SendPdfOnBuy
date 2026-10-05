@@ -7,14 +7,14 @@ function tell(pin, progress) {
   chrome.runtime.sendMessage({ type: "progress", tab: job.tab, pin, ...progress }).catch(() => {});
 }
 
-chrome.runtime.onMessage.addListener(({ target, type, pin, tab }) => {
+chrome.runtime.onMessage.addListener(({ target, type, pin, tab, src }) => {
   if (target !== "offscreen") return;
   const job = jobs.get(pin);
   if (type === "hunt" && job) { job.tab = tab; tell(pin, job.last); }  // seen it already: just say where it is
   else if (type === "hunt") {
     jobs.set(pin, { tab });
     tell(pin, { state: "scan", text: "SCANNING..." });
-    hunt(pin, (p) => tell(pin, p)).then((r) => {
+    hunt(pin, (p) => tell(pin, p), src).then((r) => {
       jobs.get(pin).result = r;
       const n = r.files.length;
       tell(pin, n ? { state: "ready", text: `GET ZIP · ${n} FILE${n > 1 ? "S" : ""}` } : { state: "none", text: r.why, src: r.src });

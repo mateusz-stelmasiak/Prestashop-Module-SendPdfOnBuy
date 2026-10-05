@@ -1,19 +1,30 @@
 @font-face { font-family: "SimsGrab Pixel"; src: url("chrome-extension://__MSG_@@extension_id__/PressStart2P.ttf"); }
 .sg-badge, .sg-badge * { all: unset; }
-.sg-badge { position: absolute; z-index: 2147483000; top: 10px; left: 10px; max-width: calc(100% - 20px); box-sizing: border-box;
-            display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; align-items: center; padding: 8px 10px;
-            background: #12141c; color: #ece8da; border: 3px solid #ff8fc7; box-shadow: 3px 3px 0 #0009;
-            font: 8px/1.4 "SimsGrab Pixel", monospace; letter-spacing: .5px; cursor: progress; animation: sg-pop .2s steps(3); }
-.sg-badge i { width: 9px; height: 14px; background: #3ddc6f; clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); animation: sg-bob .6s steps(2) infinite; }
+.sg-badge { position: absolute; z-index: 2147483000; box-sizing: border-box; display: grid; grid-template-columns: auto 1fr;
+            gap: 4px 8px; align-items: center; padding: 8px 10px; background: #12141c; color: #ece8da; border: 3px solid #3ddc6f;
+            box-shadow: 3px 3px 0 #0009; font: 8px/1.4 "SimsGrab Pixel", monospace; letter-spacing: .5px; cursor: pointer;
+            transition: opacity .15s; }
+.sg-badge i { width: 9px; height: 14px; background: #3ddc6f; clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
 .sg-badge span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sg-badge small { grid-column: 2; font-size: 7px; color: #ff8fc7; }
 .sg-badge small:empty { display: none; }
-.sg-badge[data-state="ready"] { background: #3ddc6f; color: #12141c; border-color: #12141c; cursor: pointer; animation: sg-pop .2s steps(3), sg-glow 1s steps(2) infinite; }
-.sg-badge[data-state="ready"] i { background: #12141c; animation: none; }
+
+/* on a pin in the feed: under Pinterest's own top row (board picker, Save), shown on hover until it has something to say */
+.sg-pin { top: 58px; left: 10px; max-width: calc(100% - 20px); }
+.sg-pin[data-state="idle"]:not(.sg-show) { opacity: 0; }
+
+/* on a pin's own page: a fixed button in the corner */
+.sg-dock { position: fixed; left: 24px; bottom: 24px; padding: 14px 16px; font-size: 10px; border-width: 4px; gap: 6px 10px; }
+.sg-dock i { width: 12px; height: 19px; }
+.sg-dock small { font-size: 8px; }
+
+.sg-badge:hover { background: #1d2030; }
+.sg-badge[data-state="scan"], .sg-badge[data-state="files"] { border-color: #ff8fc7; cursor: progress; }
+.sg-badge[data-state="scan"] i, .sg-badge[data-state="files"] i { animation: sg-bob .6s steps(2) infinite; }
+.sg-badge[data-state="ready"] { background: #3ddc6f; color: #12141c; border-color: #12141c; animation: sg-glow 1s steps(2) infinite; }
+.sg-badge[data-state="ready"] i { background: #12141c; }
 .sg-badge[data-state="ready"]:hover { background: #ece8da; }
 .sg-badge[data-state="none"] { border-color: #7b8099; color: #a9adbf; cursor: default; }
-.sg-badge[data-state="none"] i { background: #7b8099; animation: none; }
-.sg-badge[data-src] { cursor: pointer; }
+.sg-badge[data-state="none"] i { background: #7b8099; }
 @keyframes sg-bob { 50% { transform: translateY(-2px); } }
-@keyframes sg-pop { from { transform: scale(.6); opacity: 0; } }
 @keyframes sg-glow { 50% { box-shadow: 3px 3px 0 #0009, 0 0 0 3px #3ddc6f66; } }

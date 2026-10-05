@@ -97,9 +97,9 @@ async function pinSource(pin) {  // the page a pin was saved from
   return null;
 }
 
-async function hunt(pin, say) {  // pin -> its source page -> (the CC posts it lists) -> the mod files
+async function hunt(pin, say, known) {  // pin -> its source page -> (the CC posts it lists) -> the mod files
   say({ state: "scan", text: "FINDING SOURCE" });
-  const src = await pinSource(pin);
+  const src = known || (await pinSource(pin));  // known: the source link Pinterest already shows on the pin
   if (!src) return { files: [], why: "PIN HAS NO LINK" };
   say({ state: "scan", text: `READING ${site(src).toUpperCase()}` });
   let targets = [], name = "";
