@@ -126,6 +126,40 @@ async function pinSource(pin) {  // the page a pin was saved from
   return null;
 }
 
+const isZip = (d) => d[0] === 0x50 && d[1] === 0x4b && d[2] === 3 && d[3] === 4;
+
+async function unzip(data) {  // a zip's files as [{name, data}], read through its central directory
+  const v = new DataView(data.buffer, data.byteOffset, data.byteLength), out = [];
+  let end = data.length - 22;
+  while (end >= 0 && v.getUint32(end, true) !== 0x06054b50) end--;
+  if (end < 0) return out;
+  for (let i = 0, p = v.getUint32(end + 16, true); i < v.getUint16(end + 10, true) && v.getUint32(p, true) === 0x02014b50; i++) {
+    const flags = v.getUint16(p + 8, true), method = v.getUint16(p + 10, true), size = v.getUint32(p + 20, true),
+          nameLen = v.getUint16(p + 28, true), at = v.getUint32(p + 42, true);
+    const name = new TextDecoder().decode(data.subarray(p + 46, p + 46 + nameLen));
+    p += 46 + nameLen + v.getUint16(p + 30, true) + v.getUint16(p + 32, true);
+    if (name.endsWith("/") || flags & 1) continue;  // folders, and locked (encrypted) entries
+    const start = at + 30 + v.getUint16(at + 26, true) + v.getUint16(at + 28, true), raw = data.subarray(start, start + size);
+    if (method === 0) out.push({ name, data: raw.slice() });
+    else if (method === 8) {
+      const inflated = new Blob([raw]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+      out.push({ name, data: new Uint8Array(await new Response(inflated).arrayBuffer()) });
+    }
+  }
+  return out;
+}
+
+async function loadable(f, depth = 0) {  // a download as files the game can load: zips are opened, zips in zips too
+  if (/\.ts4script$/i.test(f.name) || !isZip(f.data)) return [f];  // .package, .ts4script (a zip the game wants as is), .rar, .7z
+  const out = [];
+  for (const e of depth < 4 ? await unzip(f.data).catch(() => []) : []) {
+    const name = clean(e.name.split("/").pop());
+    if (/\.(package|ts4script|rar|7z)$/i.test(name)) out.push({ name, data: e.data });
+    else if (/\.zip$/i.test(name) || (!FILE.test(name) && isZip(e.data))) out.push(...(await loadable({ name, data: e.data }, depth + 1)));
+  }  // readmes, previews and the like are left out
+  return out;
+}
+
 const noAgent = async () => null;
 
 async function hunt(pin, say, known, agent = noAgent) {  // pin -> its source page -> (the CC posts it lists) -> the mod files
@@ -149,11 +183,13 @@ async function hunt(pin, say, known, agent = noAgent) {  // pin -> its source pa
     }
   }
   targets = [...new Set(targets)].slice(0, 40);
-  const files = [], stuck = [], add = (f) => f && !files.some((x) => x.name === f.name && x.data.length === f.data.length) && files.push(f);
+  const files = [], stuck = [], add = async (f) => {  // flat: no zips inside the pack, the game wouldn't load them
+    for (const m of f ? await loadable(f) : []) if (!files.some((x) => x.name === m.name && x.data.length === m.data.length)) files.push(m);
+  };
   let done = 0, saved = 0;
   await pool(targets, 4, async (u) => {
     const f = await getFile(u).catch(() => null);
-    f ? add(f) : stuck.push(u);
+    f ? await add(f) : stuck.push(u);
     say({ state: "files", text: `GOING TO FILES ${++done}/${targets.length}`, count: files.length });
   });
   // the patient pass: a browser agent opens what the quick look couldn't crack, waits out countdowns, presses
@@ -161,10 +197,10 @@ async function hunt(pin, say, known, agent = noAgent) {  // pin -> its source pa
   for (const u of (targets.length ? stuck : [src]).slice(0, 4)) {
     say({ state: "files", text: `AGENT WAITING ON ${site(u).toUpperCase()}`, count: files.length });
     const got = await agent(u).catch(() => null);
-    for (const f of got?.urls || []) add(await getFile(f).catch(() => null));
+    for (const f of got?.urls || []) await add(await getFile(f).catch(() => null));
     for (const d of got?.downloads || []) {  // a download the agent caught: fetch it ourselves for the zip
       const r = await get(d.url).catch(() => null);
-      if (r?.ok && !isPage(r)) { add(await asFile(r)); got.drop?.(d.id); }  // in the zip now, or junk: either way not in Downloads
+      if (r?.ok && !isPage(r)) { await add(await asFile(r)); got.drop?.(d.id); }  // in the zip now, or junk: either way not in Downloads
       else saved++;  // couldn't fetch it again (one-time link): Chrome's own copy stays in Downloads
     }
   }

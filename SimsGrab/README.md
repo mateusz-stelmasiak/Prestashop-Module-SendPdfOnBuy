@@ -29,7 +29,7 @@ Mods are installed to `Mods\SimsGrab\<pack or mod name>\`. `.ts4script` files go
 **Works right on Pinterest.** Every pin gets a pixel **◆ GRAB MODS** button. It shows when you hover the pin, just below Pinterest's own Save row. A pin's own page gets a big **SIMSGRAB** button in the bottom-left corner.
 
 - **Click it and walk away.** The pin joins a queue and saves itself when it's done (**AUTO-SAVE ON**). Click as many pins as you like. Two are worked on at a time, and clicked pins go ahead of ones you only hovered. A counter in the corner shows what's working, waiting and auto-saving.
-- **Straight into Mods.** With the SimsGrab app open, finished packs go right into `Mods\SimsGrab\<pack name>\`, zips inside zips included, and Plumbie tells you. With the app closed, the zip lands in `Downloads` and the app offers to move it when you open it.
+- **Straight into Mods.** With the SimsGrab app open, finished packs go right into `Mods\SimsGrab\<pack name>\`, fully unpacked, and Plumbie tells you. With the app closed, the zip lands in `Downloads` and the app offers to move it when you open it.
 
 What it does for each pin:
 
@@ -40,7 +40,8 @@ What it does for each pin:
    - "Your download starts in 10 seconds" pages are waited out.
    - **AGENT WAITING ON …**: when a page only shows its file after JavaScript, a countdown or a button press, a browser agent opens it in a minimized window. It waits up to 40 seconds and presses **Download** like a person would, then catches the file. Its windows and pop-ups are closed afterwards.
    - Anything it catches that isn't a mod is deleted.
-4. **IN MODS! · 5 FILES**, or **GET ZIP** if you only hovered: click it to save the zip.
+4. **No zips inside the pack.** Creators' zips, and zips inside those, are opened, and only loose `.package` / `.ts4script` files go in. The game can't load anything zipped.
+5. **IN MODS! · 5 FILES**, or **GET ZIP** if you only hovered: click it to save the zip.
 
 If nothing can be fetched (logins, paid posts, a pin with no link), the button says so. Click it to open the source page.
 
@@ -53,6 +54,23 @@ On any other page, click the plumbob in the toolbar. It lists every mod link on 
 It runs in your own Chrome, so your logins work: Patreon posts you have access to, Tumblr, and sites that block bots. If the SimsGrab app is running, Plumbie offers to move new downloads into Mods.
 
 **Install:** unzip `SimsGrab-chrome.zip` from the latest release, open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick the unzipped folder. Then pin it with the puzzle icon.
+
+## Mod doctor
+
+The game won't start ("required data is missing or damaged… remove your mods")? That's almost always one broken mod.
+
+- **Auto-quarantine:** the app checks every file in Mods, and every new one as it arrives. It reads each `.package` file's header and index, and test-opens each `.ts4script`. Broken files are moved to `SimsGrab Quarantine` next to Mods, with the reason in `why.txt`. Nothing is deleted. Broken files are:
+  - cut-off downloads,
+  - web pages saved as `.package`,
+  - empty files,
+  - Sims 2 and 3 packages,
+  - damaged script mods.
+- **A broken `Resource.cfg`** is restored to the game's default.
+- **Zips, rars and 7zs in Mods** are unpacked in place; the game can't read inside them. The archives are kept in `Downloads\SimsGrab\from Mods`.
+- **Script mods buried deeper** than one folder are moved up to where the game looks.
+- **Game won't start?** in Plumbie's menu: if every file looks healthy, she runs the **50/50 hunt**. She moves half the mods out, you start the game and say whether it loads, and she narrows it down. That's about 11 starts for 2,000 mods. The culprit goes to quarantine and everything else goes back. Closing the app mid-hunt is fine, and "stop" puts everything back.
+
+Rar and 7z use the `tar` that comes with Windows 10 and 11. Very new RAR5 files may need Windows 11.
 
 ## How it works
 

@@ -245,7 +245,7 @@ function say(text, choices = [], ask = false, wait = true) {
     cv.classList.add("in"); d.classList.add("show"); ch.classList.remove("show"); more.style.display = inp.style.display = "none";
     box.textContent = ""; talking = 1; passing = !wait && !ask && !choices.length; let i = 0;
     const finish = () => {
-      talking = 0; passing = false; box.textContent = text;
+      talking = 0; passing = false; keys = null; box.textContent = text;
       if (ask) { inp.style.display = "block"; inp.value = ""; inp.focus(); inp.onkeydown = (e) => e.key === "Enter" && inp.value.trim() && (close(), done(inp.value.trim())); }
       else if (choices.length) pickFrom(choices, (k) => (close(), done(k)));
       else if (!wait) done();
@@ -253,7 +253,9 @@ function say(text, choices = [], ask = false, wait = true) {
     };
     const close = () => { d.onclick = null; keys = null; inp.onkeydown = null; ch.classList.remove("show"); };
     const type = () => (i < text.length && talking ? ((box.textContent = text.slice(0, ++i)), setTimeout(type, 22)) : finish());
-    d.onclick = () => (i = text.length); type();
+    d.onclick = () => (i = text.length);
+    keys = (e) => e.key === "Enter" && (i = text.length);  // Enter while typing: show it all at once
+    type();
   }));
   queue = run.catch(() => {});
   return run;
@@ -277,11 +279,13 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 /* ---------- flows ---------- */
 async function menu() {
   const k = await say("Hiii! I'm Plumbie, your mod buddy ✦ What are we hunting today?",
-                      ["Mods by vibe", "This or That game", "Pinterest pin or board", "Tidy my Downloads", "Just browsing"]);
+                      ["Mods by vibe", "This or That game", "Pinterest pin or board", "Tidy my Downloads", "Check & fix my Mods", "Game won't start?", "Just browsing"]);
   if (k === 0) return vibe();
   if (k === 1) return play(await say("Paste a pin to start from, or say one word!", [], true));
   if (k === 2) return go(await say("Paste a pin or a whole board right here!", [], true), "");
   if (k === 3) return tidy();
+  if (k === 4) return checkMods();
+  if (k === 5) return rescue();
   hush();
 }
 async function vibe() {
@@ -343,6 +347,49 @@ async function grabOne(url) {
   try { const r = await api().grab(url); busy(false); cheer = 1; await say(`Got it! ${r.name}, ${r.files} files installed in your Mods.`); hush(); }
   catch (e) { busy(false); say(`FAILED: ${e.message || e}. Some sites hide behind logins, sorry!`); }
 }
+const files = (n) => `${n} file${n === 1 ? "" : "s"}`;
+const listed = (items) => items.slice(0, 3).map((i) => `${i.name} (${i.why})`).join(", ") + (items.length > 3 ? ` and ${items.length - 3} more` : "");
+
+async function checkMods(found = null) {  // archives and buried script mods the game can't load, then a health check
+  const r = found || (await api().check_mods()), a = r.archives.length, d = r.deep.length;
+  if (a || d) {
+    const what = [a && `${a} archive${a > 1 ? "s" : ""} the game can't open (${r.archives.slice(0, 3).join(", ")})`,
+                  d && `${d} script mod${d > 1 ? "s" : ""} buried too deep`].filter(Boolean).join(" and ");
+    if ((await say(`I peeked in your Mods folder: ${what}. Want me to fix it?`, ["Yes, fix it!", "Not now"])) !== 0) return hush();
+    const f = await api().fix_mods();
+    cheer = 1;
+    await say(`Fixed! ${files(f.fixed)} can load now. The old archives are in Downloads/SimsGrab/from Mods.`
+              + (f.failed.length ? ` I couldn't open ${f.failed.join(", ")}, sorry!` : ""));
+  }
+  if (found) return hush();
+  const h = await api().doctor();
+  await say(h.quarantined.length ? `I also moved ${files(h.quarantined.length)} that could break the game to SimsGrab Quarantine: ${listed(h.quarantined)}.`
+                                 : a || d ? "Every mod file is healthy too ✦" : "Your Mods folder looks perfect! Nothing zipped, nothing broken ✦");
+  hush();
+}
+
+async function rescue() {  // "the game won't start": check every file, then the 50/50 hunt if that wasn't it
+  say("Oh no! Let me check every mod for damage...", [], false, false);
+  const h = await api().doctor(), n = h.quarantined.length;
+  const k = await say(n ? `Found ${files(n)} that can stop the game: ${listed(h.quarantined)}. They're in SimsGrab Quarantine now. Start the game: does it load?`
+                        : "Every mod file looks healthy, so it's one the game just doesn't like. Want to find it with the 50/50 hunt? I move the files, you start the game.",
+                      n ? ["Yes, it works!", "Still the error"] : ["Let's hunt!", "Not now"]);
+  if (n && k === 0) { cheer = 1; await say("Yay! Happy simming ✦"); return hush(); }
+  if (!n && k === 1) return hush();
+  hunt5050(await api().bisect(null));
+}
+
+async function hunt5050(r) {  // each round: start the game and say if it loads; one bad mod gets cornered
+  while (!r.done && !r.culprit) {
+    const k = await say(`50/50 hunt: I moved ${r.out} of ${r.left} suspects out of Mods, about ${r.tries_left} more tr${r.tries_left === 1 ? "y" : "ies"}. Start the game now. Does it load?`,
+                        ["Yes, it loads", "Still the error", "Stop, put everything back"]);
+    r = await api().bisect(["works", "broken", "stop"][k]);
+  }
+  if (r.culprit) { cheer = 1; await say(`Found it! "${r.culprit}" was the troublemaker. It's in SimsGrab Quarantine and everything else is back. Start the game ✦`); }
+  else await say("Okay! All your mods are back where they were.");
+  hush();
+}
+
 async function tidy() {
   try { const n = await api().tidy(); cheer = n ? 1 : 0; await say(n ? `Done! Moved ${n} mod files into your Mods folder.` : "Your Downloads are already squeaky clean!"); hush(); }
   catch (e) { say(`Couldn't tidy: ${e.message || e}`); }
@@ -485,7 +532,7 @@ $("#pb").onclick = () => choose(1);
 $("#enough").onclick = () => game.on && finish();
 $("#quit").onclick = () => (quit(), hush());
 $("#vsgo").onclick = () => { const w = $("#word").value.trim(); w ? play(w) : say("Type a word or paste a pin first, then hit VS!"); };
-addEventListener("keydown", (e) => game.on && !keys && (e.key === "ArrowLeft" || e.key === "ArrowRight") && choose(e.key === "ArrowRight" ? 1 : 0));
+addEventListener("keydown", (e) => game.on && !$("#choices").classList.contains("show") && (e.key === "ArrowLeft" || e.key === "ArrowRight") && choose(e.key === "ArrowRight" ? 1 : 0));
 
 /* ---------- page bits ---------- */
 function busy(on) { state.busy = on; document.querySelectorAll(".go, #dl").forEach((b) => (b.disabled = on)); if (!on) updateCount(); }
@@ -532,6 +579,10 @@ window.ui = { on(ev) {
   } else if (ev.kind === "chrome") {  // the Chrome extension handed over a pack
     cheer = 1;
     if (!state.busy && !game.on) say(`Ding! ${ev.files} file${ev.files === 1 ? "" : "s"} from "${ev.name}" just landed in your Mods ✦`, [], false, false);
+  } else if (ev.kind === "quarantined") {  // the watcher caught broken mods before the game did
+    say(`Heads up! I moved ${files(ev.items.length)} that would stop the game from starting to SimsGrab Quarantine: ${listed(ev.items)}.`, [], false, false);
+  } else if (ev.kind === "modcheck" && !state.busy && !game.on) {
+    checkMods(ev);
   } else if (ev.kind === "loose" && !state.busy) {
     say(`Psst! I spotted ${ev.count} mod${ev.count > 1 ? "s" : ""} lying in your Downloads (${ev.names.join(", ")}). Move them into Mods?`,
         ["Yes, tidy up!", "Not now"]).then((k) => (k === 0 ? tidy() : hush()));
@@ -544,7 +595,12 @@ async function start() {
   $("#cat").innerHTML = h.categories.map((c) => `<option value="${c}">${c.toUpperCase()}</option>`).join("");
   $("#model").innerHTML = h.models.map((m) => `<option>${esc(m)}</option>`).join(""); $("#model").value = h.model;
   setMods(h.mods);
-  setTimeout(() => { cv.classList.add("in"); menu(); }, 400);
+  setTimeout(async () => {
+    cv.classList.add("in");
+    if (!h.bisecting) return menu();
+    await say("Welcome back! We're in the middle of the 50/50 hunt, let's finish it.");
+    hunt5050(await api().bisect(null));
+  }, 400);
 }
 window.pywebview?.api ? start() : addEventListener("pywebviewready", start);
 </script>

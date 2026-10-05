@@ -5,7 +5,7 @@ Agents follow the trail from a pin (or a web search) through the usual CC hosts
 real mod file turns up. An optional local model (Ollama) writes the searches and
 picks which link to click. The window is web/index.html shown by pywebview.
 """
-import base64, heapq, html, io, itertools, json, os, re, shutil, sys, threading, time, webbrowser, zipfile
+import base64, heapq, html, itertools, json, math, os, re, shutil, struct, subprocess, sys, tempfile, threading, time, webbrowser, zipfile
 from concurrent.futures import ThreadPoolExecutor
 from http.cookiejar import CookieJar
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -26,6 +26,9 @@ SEARCH = "https://html.duckduckgo.com/html/?q="
 BING = "https://www.bing.com/search?q="
 OLLAMA = "http://localhost:11434"
 DOOR = 47323  # local port where the Chrome extension hands over zips for the Mods folder
+LOADABLE, ARCHIVES = (".package", ".ts4script"), (".zip", ".rar", ".7z")  # the game loads the first kind, never the second
+TAR = next((t for t in [os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "System32", "tar.exe")] if os.path.exists(t)), "tar")
+NO_WINDOW = {"creationflags": 0x08000000} if os.name == "nt" else {}  # no console flashing up for tar
 KINDS = {b"PK\x03\x04": ".zip", b"Rar!": ".rar", b"7z\xbc\xaf": ".7z", b"DBPF": ".package"}  # magic bytes
 EXTS = (*KINDS.values(), ".ts4script")
 HOSTS = ("simfileshare.net/download", "mediafire.com/file", "mediafire.com/?", "drive.google.com", "dropbox.com/s",
@@ -211,27 +214,54 @@ def save(data, name):
     return path
 
 
-def install(path, mods, folder):
-    """Unpack a grabbed zip into Mods/SimsGrab, zips inside zips too. Packages may sit deep, scripts only one folder down."""
-    def unpack(z):
-        n = 0
-        for f in z.namelist():
-            ext = Path(f).suffix.lower()
-            if ext == ".zip":
+def unpack(path, depth=0):
+    """Every mod the game can load inside an archive, as (name, bytes): zips, rars and 7zs, archives inside archives too.
+    Zips open in Python; rar and 7z use the tar that comes with Windows 10 and 11. Raises Fail if it can't open one."""
+    found = []
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            if zipfile.is_zipfile(path):
+                with zipfile.ZipFile(path) as z:
+                    items = [(n, z.read(n)) for n in z.namelist() if n.lower().endswith(LOADABLE + ARCHIVES)]
+            else:
+                r = subprocess.run([TAR, "-xf", str(path), "-C", tmp], capture_output=True, timeout=600, **NO_WINDOW)
+                if r.returncode:
+                    raise Fail(f"can't open {Path(path).name}")
+                items = [(str(f), f.read_bytes()) for f in Path(tmp).rglob("*") if f.is_file() and f.name.lower().endswith(LOADABLE + ARCHIVES)]
+        except (OSError, RuntimeError, zipfile.BadZipFile, subprocess.SubprocessError) as e:  # RuntimeError: a locked zip
+            raise Fail(f"can't open {Path(path).name}") from e
+        for k, (name, data) in enumerate(items):
+            base = clean(name.replace("\\", "/").rsplit("/", 1)[-1])
+            if base.lower().endswith(LOADABLE):
+                found.append((base, data))
+            elif depth < 4:  # an archive inside the archive: open that too
+                inner = Path(tmp) / f"{k}_{base}"
+                inner.write_bytes(data)
                 try:
-                    with zipfile.ZipFile(io.BytesIO(z.read(f))) as inner:
-                        n += unpack(inner)
-                except zipfile.BadZipFile:
+                    found += unpack(inner, depth + 1)
+                except Fail:
                     pass
-            elif ext in (".package", ".ts4script"):
-                out = Path(mods) / "SimsGrab" / (clean(folder) if ext == ".package" else "") / Path(f).name
-                out.parent.mkdir(parents=True, exist_ok=True)
-                out.write_bytes(z.read(f))
-                n += 1
-        return n
+    return found
 
-    with zipfile.ZipFile(path) as z:
-        return unpack(z)
+
+def place(dest, data):
+    """Write a mod file without clobbering a different one that has the same name. Returns 1."""
+    out, i = dest, 1
+    while out.exists() and not (out.stat().st_size == len(data) and out.read_bytes() == data):
+        i += 1
+        out = dest.with_name(f"{dest.stem} ({i}){dest.suffix}")
+    if not out.exists():
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(data)
+    return 1
+
+
+def install(path, mods, folder):
+    """Put the mods from a grabbed archive into Mods/SimsGrab, fully unpacked: the game can't load anything zipped.
+    Packages get a folder per pack; script mods sit one folder down, the deepest the game looks for them."""
+    root = Path(mods) / "SimsGrab"
+    return sum(place((root / clean(folder) if name.lower().endswith(".package") else root) / name, data)
+               for name, data in unpack(path))
 
 
 def grab(url, log=lambda agent, msg: None, model="", goal="a Sims 4 mod", pages=MAX_PAGES, see=lambda *a: None):
@@ -416,20 +446,25 @@ def similar(url, model="", log=lambda agent, msg: None, see=lambda *a: None, n=5
     return clean(name), cards[:n]
 
 
+def contents(path):
+    """The names inside an archive, without unpacking it; [] if it can't be read."""
+    try:
+        if zipfile.is_zipfile(path):
+            with zipfile.ZipFile(path) as z:
+                return z.namelist()
+        r = subprocess.run([TAR, "-tf", str(path)], capture_output=True, text=True, timeout=60, **NO_WINDOW)
+        return r.stdout.splitlines() if r.returncode == 0 else []
+    except (OSError, zipfile.BadZipFile, subprocess.SubprocessError):
+        return []
+
+
 def loose_mods():
-    """Mods sitting in Downloads: .package / .ts4script files and zips that contain them."""
+    """Mods sitting in Downloads: .package / .ts4script files, and zips, rars and 7zs that hold mods."""
     found = []
     for f in sorted(DOWNLOADS.glob("*")) if DOWNLOADS.is_dir() else []:
         ext = f.suffix.lower()
-        if ext in (".package", ".ts4script"):
+        if ext in LOADABLE or ext in ARCHIVES and any(n.lower().endswith(LOADABLE + ARCHIVES) for n in contents(f)):
             found.append(f)
-        elif ext == ".zip":
-            try:
-                with zipfile.ZipFile(f) as z:
-                    if any(n.lower().endswith((".package", ".ts4script")) for n in z.namelist()):
-                        found.append(f)
-            except (OSError, zipfile.BadZipFile):
-                pass
     return found
 
 
@@ -437,8 +472,11 @@ def tidy(mods):
     """Move loose mods from Downloads into Mods/SimsGrab. Zips are unpacked, then kept in OUT."""
     n = 0
     for f in loose_mods():
-        if f.suffix.lower() == ".zip":
-            n += install(f, mods, f.stem)
+        if f.suffix.lower() in ARCHIVES:
+            try:
+                n += install(f, mods, f.stem)
+            except Fail:  # can't open it: leave it be
+                continue
             dest = OUT / f.name
         else:
             n += 1
@@ -447,6 +485,188 @@ def tidy(mods):
         dest.unlink(missing_ok=True)
         shutil.move(f, dest)
     return n
+
+
+def mods_trouble(mods):
+    """What in the Mods folder the game won't load: archives, and script mods more than one folder down."""
+    root = Path(mods)
+    archives, deep = [], []
+    for f in sorted(root.rglob("*")) if root.is_dir() else []:
+        if f.is_file() and f.suffix.lower() in ARCHIVES:
+            archives.append(f)
+        elif f.is_file() and f.suffix.lower() == ".ts4script" and len(f.relative_to(root).parts) > 2:
+            deep.append(f)
+    return archives, deep
+
+
+def fix_mods(mods):
+    """Unpack the archives in Mods right where they are and move buried script mods up to where the game looks.
+    The archives themselves are kept in Downloads/SimsGrab/from Mods, never deleted."""
+    root, fixed, failed = Path(mods), 0, []
+    archives, deep = mods_trouble(mods)
+    for a in archives:
+        try:
+            files = unpack(a)
+        except Fail:
+            failed.append(a.name)
+            continue
+        rel = a.relative_to(root)
+        scripts = root / (rel.parts[0] if len(rel.parts) > 1 else clean(a.stem))  # one folder down at most
+        for name, data in files:
+            fixed += place((a.parent / clean(a.stem) if name.lower().endswith(".package") else scripts) / name, data)
+        dest = OUT / "from Mods" / a.name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.unlink(missing_ok=True)
+        shutil.move(a, dest)
+    for s in deep:
+        fixed += place(root / s.relative_to(root).parts[0] / s.name, s.read_bytes())
+        s.unlink()
+    return {"fixed": fixed, "failed": failed}
+
+
+def check_package(f):
+    """Why a .package would break the game, or "" if it's a whole Sims 4 package (DBPF 2.1 with an index that fits)."""
+    size = f.stat().st_size
+    if size < 96:
+        return "empty or cut off"
+    with open(f, "rb") as h:
+        head = h.read(96)
+        if head[:4] != b"DBPF":
+            return "not a package (a web page or junk saved with the wrong name)"
+        major, minor = struct.unpack_from("<II", head, 4)
+        if (major, minor) != (2, 1):
+            return f"made for another Sims game (DBPF {major}.{minor})"
+        count, low, isize = struct.unpack_from("<III", head, 36)
+        pos = struct.unpack_from("<Q", head, 64)[0] or low
+        if not count:
+            return ""  # an empty package does no harm
+        if isize < 4 or pos + isize > size:
+            return "cut off (the download didn't finish)"
+        h.seek(pos)
+        index = h.read(isize)
+    flags = struct.unpack_from("<I", index)[0]
+    shared = bin(flags & 7).count("1")  # type, group and instance-high can be stored once for all entries
+    p = 4 + 4 * shared
+    for _ in range(count):
+        p += 4 * (3 - shared)
+        if p + 16 > len(index):
+            return "cut off (the download didn't finish)"
+        _, offset, packed, _ = struct.unpack_from("<IIII", index, p)
+        p += 20 if packed & 0x80000000 else 16
+        if offset + (packed & 0x7FFFFFFF) > size:
+            return "cut off (the download didn't finish)"
+    return ""
+
+
+def check_script(f):
+    """Why a .ts4script would break the game, or "" if it's a whole zip with Python inside."""
+    try:
+        with zipfile.ZipFile(f) as z:
+            if z.testzip() is not None:
+                return "damaged inside"
+            if not any(n.endswith((".py", ".pyc")) for n in z.namelist()):
+                return "no Python inside"
+    except (OSError, RuntimeError, zipfile.BadZipFile):
+        return "not a working script mod"
+    return ""
+
+
+RESOURCE_CFG = "Priority 500\n" + "".join(f"PackedFile {'*/' * i}*.package\n" for i in range(6))
+
+
+def quarantine_dir(mods):
+    return Path(mods).parent / "SimsGrab Quarantine"
+
+
+def quarantine(mods, f, why, shelf="broken"):
+    """Move a mod out of Mods into the quarantine, keeping its folders so it can go back, and note why."""
+    rel = f.relative_to(mods)
+    dest = quarantine_dir(mods) / shelf / rel
+    while dest.exists():
+        dest = dest.with_name(f"{dest.stem}~{dest.suffix}")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(f, dest)
+    with open(quarantine_dir(mods) / "why.txt", "a", encoding="utf-8") as log:
+        log.write(f"{time.strftime('%Y-%m-%d %H:%M')}\t{rel}\t{why}\n")
+
+
+def autofix(mods, checked=None):
+    """Find mods that would stop the game from starting and quarantine them; restore a broken Resource.cfg.
+    checked: {path: (size, mtime)} of files already found fine, so the watcher only looks at new ones."""
+    root, moved = Path(mods), []
+    if not root.is_dir():
+        return moved
+    for f in sorted(root.rglob("*")):
+        ext = f.suffix.lower()
+        if not f.is_file() or ext not in LOADABLE:
+            continue
+        stamp = (f.stat().st_size, f.stat().st_mtime)
+        if checked is not None and checked.get(str(f)) == stamp:
+            continue
+        try:
+            why = check_package(f) if ext == ".package" else check_script(f)
+        except OSError:  # in use or unreadable right now: look again next time
+            continue
+        if why:
+            quarantine(root, f, why)
+            moved.append({"name": f.name, "why": why})
+        elif checked is not None:
+            checked[str(f)] = stamp
+    cfg = root / "Resource.cfg"
+    if cfg.is_file() and "PackedFile" not in cfg.read_text(errors="replace"):
+        quarantine(root, cfg, "broken Resource.cfg, replaced with the game's default")
+        cfg.write_text(RESOURCE_CFG)
+        moved.append({"name": "Resource.cfg", "why": "broken, replaced with the game's default"})
+    return moved
+
+
+def bisect(mods, answer=None):
+    """The 50/50 hunt for a mod that stops the game: half the suspects move out, the player starts the game and
+    answers "works" or "broken", repeat until one is left. "stop" puts everything back. Survives app restarts."""
+    root, home = Path(mods), quarantine_dir(mods)
+    file, hold = home / "50-50.json", home / "50-50 test"
+    state = json.loads(file.read_text()) if file.exists() else None
+
+    def move(rels, src, dst):
+        for r in rels:
+            if (src / r).exists():
+                (dst / r).parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(src / r, dst / r)
+
+    if answer == "stop" or answer and not state:
+        if state:
+            move(state["out"], hold, root)
+            file.unlink()
+        return {"done": True}
+    if not state:
+        suspects = sorted(str(f.relative_to(root)) for f in root.rglob("*") if f.is_file() and f.suffix.lower() in LOADABLE)
+        if not suspects:
+            return {"done": True}
+        state = {"suspects": suspects, "out": []}
+    elif answer == "works":  # the bad one went out with the half that left
+        state["suspects"] = state["out"]
+    elif answer == "broken":  # the bad one is among the ones still in Mods
+        state["suspects"] = [s for s in state["suspects"] if s not in state["out"]]
+    suspects = state["suspects"]
+    if len(suspects) == 1:  # found it: quarantine it, everything else goes back
+        culprit = suspects[0]
+        move([culprit], root, hold)
+        move([r for r in state["out"] if r != culprit], hold, root)
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "found by 50-50" / culprit).parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(hold / culprit, home / "found by 50-50" / culprit)
+        with open(home / "why.txt", "a", encoding="utf-8") as log:
+            log.write(f"{time.strftime('%Y-%m-%d %H:%M')}\t{culprit}\tfound by the 50/50 hunt\n")
+        file.unlink(missing_ok=True)
+        return {"culprit": Path(culprit).name}
+    if answer is not None or not state["out"]:
+        out = suspects[len(suspects) // 2:]
+        move([r for r in state["out"] if r not in out], hold, root)
+        move([r for r in out if r not in state["out"]], root, hold)
+        state["out"] = out
+        home.mkdir(parents=True, exist_ok=True)
+        file.write_text(json.dumps(state))
+    return {"out": len(state["out"]), "left": len(suspects), "tries_left": math.ceil(math.log2(len(suspects)))}
 
 
 class Api:
@@ -473,17 +693,40 @@ class Api:
     def hello(self):
         threading.Thread(target=self._watch, daemon=True).start()
         return {"models": ["no AI"] + models(), "model": self._cfg["model"] or "no AI", "mods": self._cfg["mods"],
-                "categories": CATEGORIES}
+                "categories": CATEGORIES, "bisecting": (quarantine_dir(self._cfg["mods"]) / "50-50.json").exists()}
 
     def _watch(self):
-        """Tell the page whenever new loose mods show up in Downloads."""
-        told = set()
+        """Keep an eye on things: new loose mods in Downloads, things in Mods the game won't load, and broken mods,
+        which go straight to quarantine so the game can start."""
+        told, warned, checked = set(), set(), {}
         while True:
+            if not (quarantine_dir(self._cfg["mods"]) / "50-50.json").exists():  # not while a 50/50 hunt moves files
+                moved = autofix(self._cfg["mods"], checked)
+                if moved:
+                    self._emit("quarantined", items=moved)
             now = {str(f) for f in loose_mods()}
             if now - told:
                 self._emit("loose", count=len(now), names=[Path(f).name for f in sorted(now)][:4])
             told = now
+            trouble = self.check_mods()
+            if set(trouble["archives"] + trouble["deep"]) - warned:
+                self._emit("modcheck", **trouble)
+            warned = set(trouble["archives"] + trouble["deep"])
             time.sleep(20)
+
+    def check_mods(self):
+        archives, deep = mods_trouble(self._cfg["mods"])
+        return {"archives": [a.name for a in archives], "deep": [d.name for d in deep]}
+
+    def fix_mods(self):
+        return fix_mods(self._cfg["mods"])
+
+    def doctor(self):
+        """Check every mod right now, quarantine the broken ones."""
+        return {"quarantined": autofix(self._cfg["mods"]), "folder": str(quarantine_dir(self._cfg["mods"]))}
+
+    def bisect(self, answer=None):
+        return bisect(self._cfg["mods"], answer)
 
     def setting(self, key, value):
         self._cfg[key] = "" if value == "no AI" else value
@@ -612,7 +855,7 @@ def door(api):
             path.write_bytes(self.rfile.read(int(self.headers.get("Content-Length", 0))))
             try:
                 n = install(path, api._cfg["mods"], name)
-            except zipfile.BadZipFile:
+            except Fail:
                 return self.send_error(400)
             try:
                 api._log("chrome", f"{name}: {n} files -> Mods")
