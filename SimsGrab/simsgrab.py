@@ -5,7 +5,7 @@ Agents follow the trail from a pin (or a web search) through the usual CC hosts
 real mod file turns up. An optional local model (Ollama) writes the searches and
 picks which link to click. The window is web/index.html shown by pywebview.
 """
-import base64, heapq, html, itertools, json, math, os, re, shutil, struct, subprocess, sys, tempfile, threading, time, webbrowser, zipfile
+import base64, hashlib, heapq, html, itertools, json, math, os, re, shutil, struct, subprocess, sys, tempfile, threading, time, webbrowser, zipfile
 from concurrent.futures import ThreadPoolExecutor
 from http.cookiejar import CookieJar
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -620,6 +620,39 @@ def autofix(mods, checked=None):
     return moved
 
 
+def duplicates(mods):
+    """Mod files in Mods that are byte-for-byte copies of another, as [(kept, [extra copies])].
+    Same size first, then a content fingerprint, so a name alone never makes a duplicate.
+    The copy kept is the one in the shallowest folder, then the oldest."""
+    root, by_size, groups = Path(mods), {}, []
+    for f in root.rglob("*") if root.is_dir() else []:
+        if f.is_file() and f.suffix.lower() in LOADABLE and "SimsGrab Quarantine" not in f.parts:
+            by_size.setdefault(f.stat().st_size, []).append(f)
+    for same in by_size.values():
+        by_hash = {}
+        for f in same if len(same) > 1 else []:
+            by_hash.setdefault(hashlib.sha1(f.read_bytes()).hexdigest(), []).append(f)
+        for copies in by_hash.values():
+            if len(copies) > 1:
+                copies.sort(key=lambda f: (len(f.relative_to(root).parts), f.stat().st_mtime, str(f)))
+                groups.append((copies[0], copies[1:]))
+    return sorted(groups, key=lambda g: str(g[0]))
+
+
+def remove_duplicates(mods):
+    """Delete the extra copies found by duplicates(); each one is noted in the quarantine's why.txt."""
+    root, gone, freed = Path(mods), 0, 0
+    for kept, extras in duplicates(mods):
+        for f in extras:
+            freed += f.stat().st_size
+            f.unlink()
+            gone += 1
+            quarantine_dir(mods).mkdir(parents=True, exist_ok=True)
+            with open(quarantine_dir(mods) / "why.txt", "a", encoding="utf-8") as log:
+                log.write(f"{time.strftime('%Y-%m-%d %H:%M')}\t{f.relative_to(root)}\tdeleted: duplicate of {kept.relative_to(root)}\n")
+    return {"deleted": gone, "mb": round(freed / 1e6, 1)}
+
+
 def bisect(mods, answer=None):
     """The 50/50 hunt for a mod that stops the game: half the suspects move out, the player starts the game and
     answers "works" or "broken", repeat until one is left. "stop" puts everything back. Survives app restarts."""
@@ -698,7 +731,7 @@ class Api:
     def _watch(self):
         """Keep an eye on things: new loose mods in Downloads, things in Mods the game won't load, and broken mods,
         which go straight to quarantine so the game can start."""
-        told, warned, checked = set(), set(), {}
+        told, warned, checked, told_dupes = set(), set(), {}, set()
         while True:
             if not (quarantine_dir(self._cfg["mods"]) / "50-50.json").exists():  # not while a 50/50 hunt moves files
                 moved = autofix(self._cfg["mods"], checked)
@@ -708,6 +741,10 @@ class Api:
             if now - told:
                 self._emit("loose", count=len(now), names=[Path(f).name for f in sorted(now)][:4])
             told = now
+            dupes = self.find_duplicates()
+            if set(dupes["extra"]) - told_dupes:  # asks first; nothing is deleted without a yes
+                self._emit("dupes", **dupes)
+            told_dupes = set(dupes["extra"])
             trouble = self.check_mods()
             if set(trouble["archives"] + trouble["deep"]) - warned:
                 self._emit("modcheck", **trouble)
@@ -724,6 +761,15 @@ class Api:
     def doctor(self):
         """Check every mod right now, quarantine the broken ones."""
         return {"quarantined": autofix(self._cfg["mods"]), "folder": str(quarantine_dir(self._cfg["mods"]))}
+
+    def find_duplicates(self):
+        groups, root = duplicates(self._cfg["mods"]), Path(self._cfg["mods"])
+        extra = [str(f.relative_to(root)) for _, extras in groups for f in extras]
+        return {"extra": extra, "names": [Path(e).name for e in extra][:4],
+                "mb": round(sum(f.stat().st_size for _, extras in groups for f in extras) / 1e6, 1)}
+
+    def delete_duplicates(self):
+        return remove_duplicates(self._cfg["mods"])
 
     def bisect(self, answer=None):
         return bisect(self._cfg["mods"], answer)

@@ -350,6 +350,17 @@ async function grabOne(url) {
 const files = (n) => `${n} file${n === 1 ? "" : "s"}`;
 const listed = (items) => items.slice(0, 3).map((i) => `${i.name} (${i.why})`).join(", ") + (items.length > 3 ? ` and ${items.length - 3} more` : "");
 
+async function dupes(d, quiet = false) {  // copies of the same mod: delete the extras, but only after a yes
+  if (!d.extra.length) return;
+  const k = await say(`I found ${files(d.extra.length)} that are exact copies of mods you already have (${d.names.join(", ")}${d.extra.length > 4 ? "..." : ""}, ${d.mb} MB). Delete the copies? I keep one of each.`,
+                      ["Yes, delete copies", "Not now"]);
+  if (k !== 0) return quiet || hush();
+  const r = await api().delete_duplicates();
+  cheer = 1;
+  await say(`Done! ${files(r.deleted)} gone, ${r.mb} MB freed. Every mod still has one copy ✦`);
+  if (!quiet) hush();
+}
+
 async function checkMods(found = null) {  // archives and buried script mods the game can't load, then a health check
   const r = found || (await api().check_mods()), a = r.archives.length, d = r.deep.length;
   if (a || d) {
@@ -362,6 +373,7 @@ async function checkMods(found = null) {  // archives and buried script mods the
               + (f.failed.length ? ` I couldn't open ${f.failed.join(", ")}, sorry!` : ""));
   }
   if (found) return hush();
+  await dupes(await api().find_duplicates(), true);
   const h = await api().doctor();
   await say(h.quarantined.length ? `I also moved ${files(h.quarantined.length)} that could break the game to SimsGrab Quarantine: ${listed(h.quarantined)}.`
                                  : a || d ? "Every mod file is healthy too ✦" : "Your Mods folder looks perfect! Nothing zipped, nothing broken ✦");
@@ -581,6 +593,8 @@ window.ui = { on(ev) {
     if (!state.busy && !game.on) say(`Ding! ${ev.files} file${ev.files === 1 ? "" : "s"} from "${ev.name}" just landed in your Mods ✦`, [], false, false);
   } else if (ev.kind === "quarantined") {  // the watcher caught broken mods before the game did
     say(`Heads up! I moved ${files(ev.items.length)} that would stop the game from starting to SimsGrab Quarantine: ${listed(ev.items)}.`, [], false, false);
+  } else if (ev.kind === "dupes" && !state.busy && !game.on) {
+    dupes(ev);
   } else if (ev.kind === "modcheck" && !state.busy && !game.on) {
     checkMods(ev);
   } else if (ev.kind === "loose" && !state.busy) {

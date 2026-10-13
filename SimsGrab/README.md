@@ -68,6 +68,7 @@ The game won't start ("required data is missing or damaged… remove your mods")
 - **A broken `Resource.cfg`** is restored to the game's default.
 - **Zips, rars and 7zs in Mods** are unpacked in place; the game can't read inside them. The archives are kept in `Downloads\SimsGrab\from Mods`.
 - **Script mods buried deeper** than one folder are moved up to where the game looks.
+- **Duplicates:** exact copies of the same mod (same content, even under another name or folder) are found by size and content fingerprint. Plumbie lists them and deletes the extra copies only after you say yes. She keeps one copy of each, the one in the shallowest folder, then the oldest. Each deletion is logged in `why.txt`.
 - **Game won't start?** in Plumbie's menu: if every file looks healthy, she runs the **50/50 hunt**. She moves half the mods out, you start the game and say whether it loads, and she narrows it down. That's about 11 starts for 2,000 mods. The culprit goes to quarantine and everything else goes back. Closing the app mid-hunt is fine, and "stop" puts everything back.
 
 Rar and 7z use the `tar` that comes with Windows 10 and 11. Very new RAR5 files may need Windows 11.
